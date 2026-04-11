@@ -4,7 +4,9 @@ import threading
 import time
 import re
 import random
+import json
 from datetime import datetime
+from sqlalchemy import text
 from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, \
     url_for
 from flask_sqlalchemy import SQLAlchemy
@@ -15,7 +17,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'krossmag_sequential_final_2026'
+app.config['SECRET_KEY'] = 'krossmag_final_full_version_2026'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///shop.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -24,18 +26,28 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# ================== КУРСЫ ==================
+# ================== ГЛОБАЛЬНЫЕ КУРСЫ ==================
 USD_TO_KRW = 1483.0
 USD_TO_RUB = 77.38
 MARKUP = 1.65
 
+# ================== ЦВЕТА И БРЕНДЫ ==================
+COLORS = {
+    'white': 'Белый', 'black': 'Чёрный', 'red': 'Красный', 'blue': 'Синий',
+    'green': 'Зелёный', 'yellow': 'Жёлтый', 'pink': 'Розовый', 'purple': 'Фиолетовый',
+    'orange': 'Оранжевый', 'gray': 'Серый', 'beige': 'Бежевый', 'navy': 'Тёмно-синий',
+    'brown': 'Коричневый', 'mint': 'Мятный', 'burgundy': 'Бордовый'
+}
+BRANDS = ['New Balance', 'Asics', 'Nike', 'Adidas', 'Puma', 'Hoka']
 
+
+# ================== ПАРСЕР И КУРСЫ ==================
 def get_random_headers():
-    ua = [
+    ua_list = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0"
     ]
-    return {"User-Agent": random.choice(ua), "Referer": "https://kream.co.kr/"}
+    return {"User-Agent": random.choice(ua_list), "Referer": "https://kream.co.kr/"}
 
 
 def update_exchange_rates():
@@ -46,57 +58,65 @@ def update_exchange_rates():
             data = r.json()['rates']
             USD_TO_KRW = data.get('KRW', USD_TO_KRW)
             USD_TO_RUB = data.get('RUB', USD_TO_RUB)
-            print(f"✅ Курс: 1 USD = {USD_TO_KRW:.0f} KRW | {USD_TO_RUB:.2f} RUB")
-    except:
-        pass
+            print(f"✅ Курс обновлён: 1 USD = {USD_TO_KRW:.0f} KRW | {USD_TO_RUB:.2f} RUB")
+    except Exception as e:
+        print("⚠️ Не удалось обновить курс:", e)
 
 
 def parse_kream_price(url):
-    if not url or "kream.co.kr/products/" not in url:
-        return None
-    print(f"→ Парсинг цены: {url}")
+    if not url or "kream.co.kr/products/" not in url: return None
     for attempt in range(1, 4):
         try:
-            time.sleep(random.uniform(1.2, 2.5))
+            time.sleep(random.uniform(1.3, 2.8))
             r = requests.get(url, headers=get_random_headers(), timeout=8)
-            if r.status_code != 200:
-                continue
-            text = r.text.lower()
+            if r.status_code != 200: continue
+            text_lower = r.text.lower()
             candidates = []
             patterns = [r'"lowestprice"\s*:\s*(\d+)', r'"price"\s*:\s*(\d+)', r'"buyprice"\s*:\s*(\d+)']
             for pat in patterns:
-                for m in re.findall(pat, text):
+                for m in re.findall(pat, text_lower):
                     p = int(m)
-                    if 10000 <= p <= 5000000:
-                        candidates.append(p)
+                    if 10000 <= p <= 5000000: candidates.append(p)
             for tag in re.findall(r'<h[1-3][^>]*>(.*?)</h[1-3]>', r.text, re.DOTALL | re.IGNORECASE):
                 for m in re.findall(r'(\d{1,3}(?:[,\s]\d{3})*)\s*원', tag):
                     clean = re.sub(r'[^0-9]', '', m)
                     if clean:
                         p = int(clean)
-                        if 10000 <= p <= 5000000:
-                            candidates.append(p)
+                        if 10000 <= p <= 5000000: candidates.append(p)
             if candidates:
-                price = min(candidates)
-                print(f"✅ ЦЕНА: {price:,} KRW")
-                return price
+                return min(candidates)
         except:
             pass
-    print(f"⚠️ Не удалось получить цену для {url}")
     return None
 
 
-# ================== МОДЕЛИ ==================
+def get_display_price(product):
+    krw = getattr(product, 'last_krw_price', 0) or 0
+    if krw < 10000: return None
+    rub = round((krw / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10
+    usd = round(rub / USD_TO_RUB)
+    return {"rub": int(rub), "usd": int(usd)}
+
+
+def calculate_order_prices(krw):
+    if not krw or krw < 10000: return None, None, None, None, None
+    real_rub = round((krw / USD_TO_KRW * USD_TO_RUB) / 10) * 10
+    real_usd = round(real_rub / USD_TO_RUB)
+    price_rub = round((krw / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10
+    price_usd = round(price_rub / USD_TO_RUB)
+    profit = price_rub - real_rub
+    return price_rub, price_usd, real_rub, real_usd, profit
+
+
+# ================== МОДЕЛИ БД ==================
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
 
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+    def set_password(self, password): self.password_hash = generate_password_hash(password)
 
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+    def check_password(self, password): return check_password_hash(self.password_hash, password)
 
 
 class Product(db.Model):
@@ -105,6 +125,8 @@ class Product(db.Model):
     description = db.Column(db.Text)
     price = db.Column(db.String(300), nullable=False)
     sizes = db.Column(db.String(100))
+    color = db.Column(db.String(20))
+    brand = db.Column(db.String(50))
     available = db.Column(db.Boolean, default=True)
     image = db.Column(db.String(500))
     last_krw_price = db.Column(db.Float, default=0.0)
@@ -123,15 +145,20 @@ class Order(db.Model):
     comment = db.Column(db.Text)
     date = db.Column(db.DateTime, default=datetime.utcnow)
 
+    price_rub_at_order = db.Column(db.Float)
+    price_usd_at_order = db.Column(db.Float)
+    real_price_rub_at_order = db.Column(db.Float)
+    real_price_usd_at_order = db.Column(db.Float)
+    profit_rub = db.Column(db.Float)
+    product = db.relationship('Product', backref='orders')
+
 
 @login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
+def load_user(user_id): return User.query.get(int(user_id))
 
 
 def get_sizes_list(sizes_str):
-    if not sizes_str:
-        return []
+    if not sizes_str: return []
     return [s.strip() for s in sizes_str.split(',') if s.strip()]
 
 
@@ -139,90 +166,16 @@ def add_missing_columns():
     with app.app_context():
         inspector = db.inspect(db.engine)
         cols = [c['name'] for c in inspector.get_columns('product')]
-        if 'last_krw_price' not in cols:
-            db.engine.execute("ALTER TABLE product ADD COLUMN last_krw_price FLOAT DEFAULT 0")
-        if 'markup_krw' not in cols:
-            db.engine.execute("ALTER TABLE product ADD COLUMN markup_krw FLOAT DEFAULT 0")
-
-
-# ================== ПРОКСИ ==================
-@app.route('/proxy_image')
-def proxy_image():
-    url = request.args.get('url')
-    if not url or not url.startswith('https://kream-phinf.pstatic.net'):
-        return "Bad URL", 400
-    try:
-        r = requests.get(url, headers=get_random_headers(), timeout=15)
-        if r.status_code == 200:
-            return Response(r.content, mimetype=r.headers.get('Content-Type', 'image/jpeg'))
-        return "Not found", 404
-    except:
-        return "Error", 500
-
-
-# ================== AJAX — ПОСЛЕДОВАТЕЛЬНОЕ ОБНОВЛЕНИЕ ==================
-@app.route('/update_prices')
-def update_prices():
-    with app.app_context():
-        products = Product.query.all()
-        result = {}
-        updated_in_this_request = 0
-
-        for p in products:
-            if not (p.price and "kream.co.kr" in p.price):
-                result[p.id] = get_display_price(p)
-                continue
-
-            # Если цена уже есть и нормальная — не трогаем
-            if p.last_krw_price and p.last_krw_price > 10000:
-                result[p.id] = get_display_price(p)
-                continue
-
-            # Пробуем обновить только если ещё не загружена
-            krw = parse_kream_price(p.price)
-            if krw and krw > 10000:
-                p.last_krw_price = krw
-                p.markup_krw = round(krw * MARKUP)
-                db.session.commit()
-                print(f"✅ Успешно обновлена цена для товара {p.id}")
-                updated_in_this_request += 1
-                result[p.id] = get_display_price(p)
-            else:
-                result[p.id] = None  # всё ещё загружается
-
+        if 'color' not in cols: db.session.execute(text("ALTER TABLE product ADD COLUMN color VARCHAR(20)"))
+        if 'brand' not in cols: db.session.execute(text("ALTER TABLE product ADD COLUMN brand VARCHAR(50)"))
+        cols_order = [c['name'] for c in inspector.get_columns('order')]
+        for col in ['price_rub_at_order', 'price_usd_at_order', 'real_price_rub_at_order', 'real_price_usd_at_order',
+                    'profit_rub']:
+            if col not in cols_order: db.session.execute(text(f"ALTER TABLE 'order' ADD COLUMN {col} FLOAT"))
         db.session.commit()
-        return jsonify(result)
 
 
-def get_display_price(product):
-    krw = getattr(product, 'last_krw_price', 0) or 0
-    if krw < 10000:
-        return None
-    rub = round((krw / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10
-    usd = round(rub / USD_TO_RUB)
-    return {"rub": int(rub), "usd": int(usd)}
-
-
-# ================== ФОН (раз в 5 минут) ==================
-def background_update_prices():
-    while True:
-        with app.app_context():
-            products = Product.query.all()
-            updated = 0
-            for p in products:
-                if p.price and "kream.co.kr" in p.price and (not p.last_krw_price or p.last_krw_price < 10000):
-                    krw = parse_kream_price(p.price)
-                    if krw and krw > 10000:
-                        p.last_krw_price = krw
-                        p.markup_krw = round(krw * MARKUP)
-                        updated += 1
-            if updated > 0:
-                db.session.commit()
-                print(f"✅ Фон: обновлено {updated} товаров")
-        time.sleep(300)
-
-
-# ================== HTML ==================
+# ================== HTML ШАБЛОНЫ И СКРИПТЫ ==================
 BASE_HTML = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -232,61 +185,206 @@ BASE_HTML = """
     <title>KROSSMAG</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { padding-top: 70px; background: #f8f9fa; }
-        .product-card:hover { transform: translateY(-8px); box-shadow: 0 15px 30px rgba(0,0,0,0.18); transition: all 0.3s; }
-        .navbar-brand { font-weight: bold; font-size: 1.8rem; }
-        .price-main { font-size: 1.5rem; font-weight: bold; }
-        .card-img-top { height: 260px; object-fit: cover; }
+        body { padding-top: 80px; background: #f8f9fa; }
+        .product-card { transition: all 0.3s; cursor: pointer; border: none; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
+        .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
+        .navbar-brand { font-weight: bold; font-size: 1.9rem; letter-spacing: 1px; }
+        .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
+        .card-img-wrapper { position: relative; background: #fff; padding: 10px; }
+        .card-img-top { height: 260px; object-fit: contain; }
+
+        /* Мини-кнопки на фото */
+        .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.2s; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .mini-btn:hover { background: #fff; transform: scale(1.1); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+        .mini-btn.fav { top: 10px; right: 10px; }
+        .mini-btn.cart { top: 55px; right: 10px; }
+
+        .color-circle { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ddd; cursor: pointer; margin: 5px; display: inline-block; }
+        .color-circle.selected { border: 4px solid #000; box-shadow: 0 0 0 4px rgba(0,0,0,0.15); }
+        .card-color-circle { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #ccc; display: inline-block; margin-left: 8px; vertical-align: middle; }
+
+        .icon-btn img { height: 26px; transition: 0.2s; }
+        .icon-btn:hover img { transform: scale(1.1); }
+        #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
         <div class="container">
             <a class="navbar-brand" href="/">KROSSMAG</a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="/">Каталог</a>
-                <a class="nav-link" href="/order">Заказать</a>
+            <div class="ms-auto d-flex align-items-center gap-4">
+                <a href="/favorites" class="text-white text-decoration-none icon-btn">
+                    <img src="https://images.icon-icons.com/903/PNG/512/bookmark_icon-icons.com_69556.png" alt="Избранное" style="filter: invert(1);">
+                </a>
+                <a href="/cart" class="text-white text-decoration-none icon-btn">
+                    <img src="https://cdn-icons-png.flaticon.com/512/7244/7244725.png" alt="Корзина" style="filter: invert(1);">
+                </a>
             </div>
         </div>
     </nav>
+
     <div class="container mt-4">
         {% if messages %}
             {% for category, msg in messages %}
-                <div class="alert alert-{{ category }}">{{ msg }}</div>
+                <div class="alert alert-{{ category }} alert-dismissible fade show">
+                    {{ msg }} <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
             {% endfor %}
         {% endif %}
         {{ content | safe }}
     </div>
+
+    <div id="toast-container"></div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Глобальные функции Корзины и Избранного
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            toast.className = `toast align-items-center text-bg-${type} border-0 mb-2 show`;
+            toast.innerHTML = `<div class="d-flex"><div class="toast-body fw-bold">${message}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+            document.getElementById('toast-container').appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function toggleFavoriteGlobal(event, id) {
+            if (event) event.stopPropagation();
+            let fav = JSON.parse(localStorage.getItem('favorites') || '[]');
+            if (fav.includes(id)) {
+                fav = fav.filter(x => x !== id);
+                showToast('Удалено из избранного', 'secondary');
+            } else {
+                fav.push(id);
+                showToast('❤️ Добавлено в избранное', 'danger');
+            }
+            localStorage.setItem('favorites', JSON.stringify(fav));
+        }
+
+        function addToCartGlobal(event, id) {
+            if (event) event.stopPropagation();
+            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            if (!cart.includes(id)) {
+                cart.push(id);
+                localStorage.setItem('cart', JSON.stringify(cart));
+                showToast('🛒 Добавлено в корзину', 'success');
+            } else {
+                showToast('Уже в корзине', 'warning');
+            }
+        }
+
+        // Вспомогательная функция для генерации карточки (используется в корзине и избранном)
+        function createProductCardHTML(p) {
+            const priceHtml = p.available 
+                ? (p.rub ? `<p class="price-main mb-3">${p.rub} ₽ <span class="text-muted fs-6 fw-normal">- $${p.usd}</span></p>` : `<p class="text-warning mb-3">Загрузка...</p>`)
+                : `<p class="text-muted fw-bold mb-3">Нет в наличии</p>`;
+
+            const btnHtml = p.available 
+                ? `<a href="/order?product_id=${p.id}" class="btn btn-dark w-100 mt-auto">Заказать</a>`
+                : `<button class="btn btn-secondary w-100 mt-auto" disabled>Недоступно</button>`;
+
+            return `
+            <div class="col-md-4 col-lg-3 mb-4">
+                <div class="card product-card h-100 ${!p.available ? 'unavailable' : ''}">
+                    <div class="card-img-wrapper" onclick="window.location.href='/product/${p.id}'">
+                        <img src="/proxy_image?url=${p.image}" class="card-img-top w-100">
+                    </div>
+                    <div class="card-body d-flex flex-column bg-white">
+                        <h5 class="card-title text-truncate" title="${p.name}">${p.name}</h5>
+                        <div class="d-flex align-items-center mb-2">
+                            <span class="text-muted small">${p.brand}</span>
+                            <div class="card-color-circle" style="background-color: ${p.color};" title="Цвет"></div>
+                        </div>
+                        ${priceHtml}
+                        ${btnHtml}
+                    </div>
+                </div>
+            </div>`;
+        }
+    </script>
 </body>
 </html>
 """
 
 HOME_HTML = BASE_HTML.replace("{{ content | safe }}", """
-<h1 class="text-center mb-5">KROSSMAG — Оригинальные брендовые кроссовки из Кореи</h1>
+<h2 class="text-center mb-4 fw-bold">KROSSMAG — Оригинальные кроссовки</h2>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <form method="GET" class="d-flex gap-2">
+            <input type="text" name="search" class="form-control form-control-lg" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
+            <button type="button" class="btn btn-outline-dark btn-lg px-4" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">Фильтры</button>
+        </form>
+    </div>
+</div>
+
+<div class="collapse mb-4" id="filtersCollapse">
+    <div class="card card-body border-0 shadow-sm rounded-4">
+        <form method="GET">
+            <input type="hidden" name="search" value="{{ search or '' }}">
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="form-label fw-bold">Бренд</label>
+                    <select name="brand" class="form-select bg-light">
+                        <option value="">Все бренды</option>
+                        {% for b in BRANDS %}
+                            <option value="{{ b }}" {% if selected_brand == b %}selected{% endif %}>{{ b }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-8 mb-3">
+                    <label class="form-label fw-bold">Цвет</label>
+                    <div class="d-flex flex-wrap gap-1">
+                        {% for key, name in COLORS.items() %}
+                            <div onclick="selectColor('{{ key }}')" 
+                                 class="color-circle {% if selected_color == key %}selected{% endif %}" 
+                                 style="background-color: {{ key }};" 
+                                 title="{{ name }}" data-color="{{ key }}"></div>
+                        {% endfor %}
+                    </div>
+                    <input type="hidden" name="color" id="selectedColor" value="{{ selected_color or '' }}">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-dark mt-2 px-4">Показать</button>
+            <a href="/" class="btn btn-link mt-2 text-muted">Сбросить</a>
+        </form>
+    </div>
+</div>
+
 <div class="row" id="products-container">
     {% for p in products %}
-    <div class="col-md-4 mb-4" data-product-id="{{ p.id }}">
-        <div class="card product-card h-100">
-            {% if p.image %}
-                <img src="/proxy_image?url={{ p.image }}" class="card-img-top">
-            {% endif %}
-            <div class="card-body">
-                <h5 class="card-title">{{ p.name }}</h5>
-                <p class="text-muted">{{ p.description[:130] }}...</p>
-                <p id="price-{{ p.id }}" class="price-main">
-                    {% if p.last_krw_price and p.last_krw_price > 10000 %}
-                        {{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽ 
-                        <span class="text-muted fs-5">/ ${{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / USD_TO_RUB)|round(0)|int }}</span>
-                    {% else %}
-                        <span class="text-warning fw-bold">Цена загружается...</span>
-                    {% endif %}
-                </p>
-                <p><strong>Размеры:</strong> {{ p.sizes or '—' }}</p>
+    <div class="col-md-4 col-lg-3 mb-4">
+        <div class="card product-card h-100 {% if not p.available %}unavailable{% endif %}">
+            <div class="card-img-wrapper" onclick="window.location.href='/product/{{ p.id }}'">
+                {% if p.image %}
+                    <img src="/proxy_image?url={{ p.image }}" class="card-img-top w-100">
+                {% endif %}
+                <div class="mini-btn fav" onclick="toggleFavoriteGlobal(event, {{ p.id }})" title="В избранное">❤️</div>
                 {% if p.available %}
-                    <a href="/order?product_id={{ p.id }}" class="btn btn-success w-100">Заказать</a>
+                    <div class="mini-btn cart" onclick="addToCartGlobal(event, {{ p.id }})" title="В корзину">🛒</div>
+                {% endif %}
+            </div>
+
+            <div class="card-body d-flex flex-column bg-white" onclick="window.location.href='/product/{{ p.id }}'">
+                <h5 class="card-title text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                <div class="d-flex align-items-center mb-2">
+                    <span class="text-muted small">{{ p.brand }}</span>
+                    <div class="card-color-circle" style="background-color: {{ p.color }};" title="{{ COLORS.get(p.color, '') }}"></div>
+                </div>
+
+                {% if p.available %}
+                    <p id="price-{{ p.id }}" class="price-main mb-3">
+                        {% if p.last_krw_price and p.last_krw_price > 10000 %}
+                            {{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
+                            <span class="text-muted fs-6 fw-normal">- ${{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / USD_TO_RUB)|round(0)|int }}</span>
+                        {% else %}
+                            <span class="text-warning fs-6">Загрузка...</span>
+                        {% endif %}
+                    </p>
+                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
                 {% else %}
-                    <button class="btn btn-secondary w-100" disabled>Нет в наличии</button>
+                    <p class="text-muted fw-bold mb-3">Нет в наличии</p>
+                    <button class="btn btn-secondary w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
                 {% endif %}
             </div>
         </div>
@@ -295,6 +393,13 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", """
 </div>
 
 <script>
+    function selectColor(color) {
+        document.getElementById('selectedColor').value = color;
+        document.querySelectorAll('.color-circle').forEach(el => {
+            el.classList.toggle('selected', el.dataset.color === color);
+        });
+    }
+
     function updateAllPrices() {
         fetch('/update_prices')
             .then(r => r.json())
@@ -304,93 +409,332 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", """
                     if (!el) return;
                     const info = data[id];
                     if (info && info.rub) {
-                        el.innerHTML = info.rub + ' ₽ <span class="text-muted fs-5">/ $' + info.usd + '</span>';
-                    } else {
-                        el.innerHTML = '<span class="text-warning fw-bold">Цена загружается...</span>';
+                        el.innerHTML = info.rub + ' ₽ <span class="text-muted fs-6 fw-normal">- $' + info.usd + '</span>';
                     }
                 });
             })
             .catch(err => console.error(err));
     }
+    setInterval(updateAllPrices, 3000);
+</script>
+""")
 
-    // Обновляем только раз в 2 секунды, чтобы снизить нагрузку
-    setInterval(updateAllPrices, 2000);
-    window.addEventListener('load', () => setTimeout(updateAllPrices, 800));
+PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", """
+<div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-5">
+    <div class="row g-0">
+        <div class="col-md-6 bg-white d-flex align-items-center justify-content-center p-4 position-relative">
+            {% if product.image %}
+                <img src="/proxy_image?url={{ product.image }}" class="img-fluid rounded {% if not product.available %}opacity-50{% endif %}" style="max-height: 550px; object-fit: contain;">
+            {% endif %}
+            {% if not product.available %}
+                <div class="position-absolute top-50 start-50 translate-middle bg-dark text-white px-4 py-2 rounded-3 fs-4 fw-bold opacity-75">Нет в наличии</div>
+            {% endif %}
+        </div>
+
+        <div class="col-md-6 p-5 bg-light">
+            <h2 class="fw-bold mb-2">{{ product.name }}</h2>
+            <div class="d-flex align-items-center mb-4 fs-5 text-muted">
+                <span class="me-3"><strong>Бренд:</strong> {{ product.brand }}</span>
+                <span class="d-flex align-items-center">
+                    <strong>Цвет:</strong> 
+                    <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div>
+                </span>
+            </div>
+
+            <div class="my-4 p-4 bg-white rounded-4 shadow-sm">
+                {% if product.available %}
+                    <p id="detail-price" class="fs-1 fw-bold text-dark mb-0">
+                        {% if product.last_krw_price and product.last_krw_price > 10000 %}
+                            {{ ((product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
+                            <span class="fs-4 text-muted fw-normal">- ${{ ((product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / USD_TO_RUB)|round(0)|int }}</span>
+                        {% else %}
+                            <span class="text-warning fs-3">Загрузка цены...</span>
+                        {% endif %}
+                    </p>
+                {% else %}
+                    <p class="fs-2 fw-bold text-muted mb-0">Товар распродан</p>
+                {% endif %}
+            </div>
+
+            <p class="lead mb-5 text-secondary">{{ product.description or 'Подробное описание товара временно отсутствует.' }}</p>
+
+            <div class="d-flex gap-3 mb-4">
+                <button onclick="toggleFavoriteGlobal(event, {{ product.id }})" class="btn btn-outline-danger btn-lg flex-fill fw-bold bg-white">
+                    ❤️ В избранное
+                </button>
+                <button onclick="addToCartGlobal(event, {{ product.id }})" class="btn btn-outline-dark btn-lg flex-fill fw-bold bg-white" {% if not product.available %}disabled{% endif %}>
+                    🛒 В корзину
+                </button>
+            </div>
+
+            {% if product.available %}
+                <a href="/order?product_id={{ product.id }}" class="btn btn-dark btn-lg w-100 fw-bold py-3 shadow">Оформить заказ</a>
+            {% else %}
+                <button class="btn btn-secondary btn-lg w-100 fw-bold py-3 shadow" disabled>Оформить невозможно</button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    function updateSinglePrice() {
+        {% if product.available %}
+        fetch('/update_prices')
+            .then(r => r.json())
+            .then(data => {
+                const info = data[{{ product.id }}];
+                const el = document.getElementById('detail-price');
+                if (info && info.rub && el) {
+                    el.innerHTML = info.rub + ' ₽ <span class="fs-4 text-muted fw-normal">- $' + info.usd + '</span>';
+                }
+            });
+        {% endif %}
+    }
+    setInterval(updateSinglePrice, 3000);
+</script>
+""")
+
+FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", """
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h2 class="fw-bold m-0">❤️ Моё избранное</h2>
+    <button class="btn btn-outline-danger btn-sm" onclick="clearFavorites()">Очистить всё</button>
+</div>
+<div class="row" id="fav-container">
+    <div class="col-12 text-center py-5"><div class="spinner-border text-dark"></div></div>
+</div>
+
+<script>
+    function loadFavorites() {
+        const ids = JSON.parse(localStorage.getItem('favorites') || '[]');
+        const container = document.getElementById('fav-container');
+        if (ids.length === 0) {
+            container.innerHTML = '<div class="col-12 text-center py-5"><h4 class="text-muted">Список пуст</h4><a href="/" class="btn btn-dark mt-3">В каталог</a></div>';
+            return;
+        }
+        fetch('/api/products_by_ids?ids=' + ids.join(','))
+            .then(r => r.json())
+            .then(products => {
+                if(products.length === 0) {
+                    container.innerHTML = '<div class="col-12"><p>Товары не найдены</p></div>';
+                    return;
+                }
+                container.innerHTML = products.map(p => createProductCardHTML(p)).join('');
+            });
+    }
+
+    function clearFavorites() {
+        if(confirm('Точно очистить избранное?')) {
+            localStorage.setItem('favorites', '[]');
+            loadFavorites();
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", loadFavorites);
+</script>
+""")
+
+CART_HTML = BASE_HTML.replace("{{ content | safe }}", """
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h2 class="fw-bold m-0">🛒 Моя корзина</h2>
+    <button class="btn btn-outline-secondary btn-sm" onclick="clearCart()">Очистить корзину</button>
+</div>
+<div class="row" id="cart-container">
+    <div class="col-12 text-center py-5"><div class="spinner-border text-dark"></div></div>
+</div>
+
+<script>
+    function loadCart() {
+        const ids = JSON.parse(localStorage.getItem('cart') || '[]');
+        const container = document.getElementById('cart-container');
+        if (ids.length === 0) {
+            container.innerHTML = '<div class="col-12 text-center py-5"><h4 class="text-muted">Корзина пуста</h4><a href="/" class="btn btn-dark mt-3">В каталог</a></div>';
+            return;
+        }
+        fetch('/api/products_by_ids?ids=' + ids.join(','))
+            .then(r => r.json())
+            .then(products => {
+                if(products.length === 0) {
+                    container.innerHTML = '<div class="col-12"><p>Товары не найдены</p></div>';
+                    return;
+                }
+                container.innerHTML = products.map(p => createProductCardHTML(p)).join('');
+            });
+    }
+
+    function clearCart() {
+        if(confirm('Точно очистить корзину?')) {
+            localStorage.setItem('cart', '[]');
+            loadCart();
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", loadCart);
 </script>
 """)
 
 ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", """
-<h2>Оформление заказа — {{ product_name }}</h2>
-<form method="POST">
-    <input type="hidden" name="product_id" value="{{ product_id }}">
-    <div class="row g-3">
-        <div class="col-md-6"><label>Имя</label><input type="text" name="name" class="form-control" required></div>
-        <div class="col-md-6"><label>Фамилия</label><input type="text" name="surname" class="form-control" required></div>
-        <div class="col-12"><label>Телефон</label><input type="tel" name="phone" class="form-control" required></div>
-        <div class="col-12"><label>Email</label><input type="email" name="email" class="form-control"></div>
-        <div class="col-12"><label>Адрес доставки</label><input type="text" name="address" class="form-control" required></div>
-        <div class="col-md-6"><label>Размер</label>
-            <select name="size" class="form-select" required>
-                {% for s in sizes %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
-            </select>
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow-sm border-0 p-4 rounded-4">
+            <h3 class="mb-4 fw-bold">Оформление заказа</h3>
+            <div class="d-flex align-items-center mb-4 p-3 bg-light rounded">
+                <div class="card-color-circle me-3 shadow-sm" style="width:30px; height:30px; background-color: {{ product_color }};"></div>
+                <h5 class="m-0 fw-bold">{{ product_name }}</h5>
+            </div>
+
+            <form method="POST">
+                <input type="hidden" name="product_id" value="{{ product_id }}">
+                <div class="row g-3">
+                    <div class="col-md-6"><label class="form-label text-muted">Имя</label><input type="text" name="name" class="form-control form-control-lg" required></div>
+                    <div class="col-md-6"><label class="form-label text-muted">Фамилия</label><input type="text" name="surname" class="form-control form-control-lg" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Телефон</label><input type="tel" name="phone" class="form-control form-control-lg" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
+                    <div class="col-12"><label class="form-label text-muted">Адрес доставки</label><input type="text" name="address" class="form-control form-control-lg" required></div>
+                    <div class="col-md-6">
+                        <label class="form-label text-muted">Размер</label>
+                        <select name="size" class="form-select form-select-lg" required>
+                            <option value="">Выберите размер</option>
+                            {% for s in sizes %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12"><label class="form-label text-muted">Комментарий</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
+                </div>
+                <button type="submit" class="btn btn-dark btn-lg mt-4 w-100 fw-bold py-3 shadow">Подтвердить заказ</button>
+            </form>
         </div>
-        <div class="col-12"><label>Комментарий</label><textarea name="comment" class="form-control" rows="3"></textarea></div>
     </div>
-    <button type="submit" class="btn btn-success btn-lg mt-4">Отправить заказ</button>
-</form>
+</div>
 """)
 
 THANKS_HTML = BASE_HTML.replace("{{ content | safe }}", """
 <div class="text-center py-5">
-    <h2 class="text-success">Спасибо за заказ!</h2>
-    <p class="lead">Мы свяжемся с вами в ближайшее время.</p>
-    <a href="/" class="btn btn-primary mt-3">Вернуться в каталог</a>
+    <div class="display-1 mb-3">🎉</div>
+    <h2 class="text-success fw-bold">Заказ успешно оформлен!</h2>
+    <p class="lead mt-3 text-muted">Менеджер свяжется с вами в ближайшее время для подтверждения.</p>
+    <a href="/" class="btn btn-dark btn-lg mt-4 px-5">Вернуться в каталог</a>
 </div>
 """)
 
 
-# ================== ROUTES ==================
+# ================== ROUTES (ПРИЛОЖЕНИЕ) ==================
+
 @app.route('/')
 def index():
-    products = Product.query.all()
-    return render_template_string(HOME_HTML,
-                                  products=products,
-                                  messages=get_flashed_messages(with_categories=True),
-                                  USD_TO_KRW=USD_TO_KRW,
-                                  USD_TO_RUB=USD_TO_RUB,
-                                  MARKUP=MARKUP)
+    search = request.args.get('search', '').strip()
+    color = request.args.get('color')
+    brand = request.args.get('brand')
+
+    # Убрали filter_by(available=True), чтобы показывать и недоступные товары
+    query = Product.query
+    if search: query = query.filter(Product.name.ilike(f'%{search}%'))
+    if color: query = query.filter_by(color=color)
+    if brand: query = query.filter_by(brand=brand)
+
+    products = query.all()
+    return render_template_string(HOME_HTML, products=products, COLORS=COLORS, BRANDS=BRANDS, search=search,
+                                  selected_color=color, selected_brand=brand,
+                                  messages=get_flashed_messages(with_categories=True), USD_TO_KRW=USD_TO_KRW,
+                                  USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+
+
+@app.route('/api/products_by_ids')
+def api_products_by_ids():
+    ids_str = request.args.get('ids', '')
+    if not ids_str: return jsonify([])
+    try:
+        id_list = [int(x.strip()) for x in ids_str.split(',') if x.strip().isdigit()]
+        products = Product.query.filter(Product.id.in_(id_list)).all()
+        res = []
+        for p in products:
+            prices = get_display_price(p)
+            res.append({
+                'id': p.id, 'name': p.name, 'brand': p.brand, 'color': p.color,
+                'image': p.image, 'available': p.available,
+                'rub': prices['rub'] if prices else None,
+                'usd': prices['usd'] if prices else None
+            })
+        return jsonify(res)
+    except:
+        return jsonify([])
+
+
+@app.route('/product/<int:product_id>')
+def product_detail(product_id):
+    product = Product.query.get_or_404(product_id)
+    return render_template_string(PRODUCT_HTML, product=product, COLORS=COLORS, USD_TO_KRW=USD_TO_KRW,
+                                  USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+
+
+@app.route('/update_prices')
+def update_prices():
+    with app.app_context():
+        products = Product.query.all()
+        result = {}
+        for p in products:
+            result[p.id] = get_display_price(p)
+        return jsonify(result)
+
+
+@app.route('/proxy_image')
+def proxy_image():
+    url = request.args.get('url')
+    if not url or not url.startswith('https://kream-phinf.pstatic.net'): return "Bad URL", 400
+    try:
+        r = requests.get(url, headers=get_random_headers(), timeout=15)
+        if r.status_code == 200:
+            return Response(r.content, mimetype=r.headers.get('Content-Type', 'image/jpeg'))
+        return "Not found", 404
+    except:
+        return "Error", 500
+
+
+@app.route('/favorites')
+def favorites():
+    return render_template_string(FAVORITES_HTML)
+
+
+@app.route('/cart')
+def cart():
+    return render_template_string(CART_HTML)
 
 
 @app.route('/order', methods=['GET', 'POST'])
 def make_order():
     if request.method == 'POST':
         try:
+            product = Product.query.get_or_404(int(request.form['product_id']))
+            if not product.available:
+                flash('К сожалению, товар закончился.', 'danger')
+                return redirect('/')
+
+            krw = product.last_krw_price or 0
+            price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
+
             order = Order(
-                name=request.form['name'],
-                surname=request.form['surname'],
-                phone=request.form['phone'],
-                email=request.form.get('email'),
-                address=request.form['address'],
-                product_id=int(request.form['product_id']),
-                size=request.form['size'],
-                comment=request.form.get('comment')
+                name=request.form['name'], surname=request.form['surname'],
+                phone=request.form['phone'], email=request.form.get('email'),
+                address=request.form['address'], product_id=product.id,
+                size=request.form['size'], comment=request.form.get('comment'),
+                price_rub_at_order=price_rub, price_usd_at_order=price_usd,
+                real_price_rub_at_order=real_rub, real_price_usd_at_order=real_usd, profit_rub=profit
             )
             db.session.add(order)
             db.session.commit()
-            flash('Заказ успешно отправлен!', 'success')
             return redirect(url_for('thanks'))
-        except:
-            flash('Ошибка при создании заказа', 'danger')
+        except Exception as e:
             db.session.rollback()
+            flash(f'Ошибка: {str(e)}', 'danger')
 
     product_id = request.args.get('product_id')
-    if not product_id:
-        flash('Выберите товар', 'warning')
-        return redirect('/')
+    if not product_id: return redirect('/')
     product = Product.query.get_or_404(int(product_id))
+    if not product.available:
+        flash('Этот товар сейчас недоступен для заказа.', 'warning')
+        return redirect('/')
+
     sizes = get_sizes_list(product.sizes)
-    return render_template_string(ORDER_HTML, product_name=product.name, product_id=product.id, sizes=sizes,
-                                  messages=get_flashed_messages(with_categories=True))
+    return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color,
+                                  product_id=product.id, sizes=sizes)
 
 
 @app.route('/thanks')
@@ -398,31 +742,46 @@ def thanks():
     return render_template_string(THANKS_HTML)
 
 
-# ================== ADMIN ==================
+# ================== АДМИНКА ==================
 class MyAdminIndexView(AdminIndexView):
     @expose('/')
     def index(self):
-        if not current_user.is_authenticated:
-            return redirect(url_for('login'))
+        if not current_user.is_authenticated: return redirect(url_for('login'))
         return super().index()
 
 
 class ProductAdmin(ModelView):
-    column_list = ['id', 'name', 'price', 'last_krw_price', 'markup_krw', 'sizes', 'available']
-    form_columns = ['name', 'description', 'price', 'sizes', 'available', 'image']
-    column_searchable_list = ['name']
-    form_widget_args = {'price': {'placeholder': 'https://kream.co.kr/products/...'}}
+    column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
+    form_columns = ['name', 'description', 'price', 'brand', 'color', 'sizes', 'available', 'image']
+    column_searchable_list = ['name', 'brand']
+    form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
+
+    def real_rub(view, context, model, name):
+        if not model.last_krw_price or model.last_krw_price < 10000: return '-'
+        return f"{round((model.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽"
+
+    def price_rub(view, context, model, name):
+        if not model.last_krw_price or model.last_krw_price < 10000: return '-'
+        return f"{round((model.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽"
+
+    def profit_rub(view, context, model, name):
+        if not model.last_krw_price or model.last_krw_price < 10000: return '-'
+        real = round((model.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10
+        with_m = round((model.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10
+        return f"{with_m - real:,} ₽"
+
+    column_formatters = {'real_rub': real_rub, 'price_rub': price_rub, 'profit_rub': profit_rub}
 
     def is_accessible(self):
         return current_user.is_authenticated
 
 
 class OrderAdmin(ModelView):
-    column_list = ['id', 'date', 'name', 'surname', 'phone', 'address', 'size']
+    column_list = ['id', 'date', 'name', 'surname', 'phone', 'size', 'price_rub_at_order', 'real_price_rub_at_order',
+                   'profit_rub']
     can_export = True
 
-    def is_accessible(self):
-        return current_user.is_authenticated
+    def is_accessible(self): return current_user.is_authenticated
 
 
 admin = Admin(app, name='Админка KROSSMAG', theme=Bootstrap4Theme(), index_view=MyAdminIndexView())
@@ -436,23 +795,18 @@ def login():
         user = User.query.filter_by(username=request.form.get('username')).first()
         if user and user.check_password(request.form.get('password')):
             login_user(user)
-            flash('Успешный вход', 'success')
             return redirect(url_for('admin.index'))
         flash('Неверные данные', 'danger')
     return render_template_string(BASE_HTML.replace("{{ content | safe }}", """
         <div class="row justify-content-center mt-5">
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-body">
-                        <h3 class="text-center">Вход в админку</h3>
-                        <form method="post">
-                            <input type="text" name="username" class="form-control mb-3" value="admin" required>
-                            <input type="password" name="password" class="form-control mb-3" required>
-                            <button type="submit" class="btn btn-primary w-100">Войти</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
+            <div class="col-md-4"><div class="card shadow-sm"><div class="card-body">
+                <h3 class="text-center mb-4">Вход в админку</h3>
+                <form method="post">
+                    <input type="text" name="username" class="form-control mb-3" value="admin" required>
+                    <input type="password" name="password" class="form-control mb-3" required>
+                    <button type="submit" class="btn btn-dark w-100">Войти</button>
+                </form>
+            </div></div></div>
         </div>
     """), messages=get_flashed_messages(with_categories=True))
 
@@ -464,30 +818,37 @@ def logout():
     return redirect(url_for('index'))
 
 
-# ================== ЗАПУСК ==================
+# ================== ЗАПУСК И ПОТОКИ ==================
 if __name__ == '__main__':
     with app.app_context():
-        if os.path.exists('shop.db'):
-            os.remove('shop.db')
-            print("Старая база удалена")
-
         db.create_all()
         add_missing_columns()
-
         if not User.query.filter_by(username='admin').first():
             u = User(username='admin')
             u.set_password('78957895')
             db.session.add(u)
             db.session.commit()
-            print("✅ Админ создан (admin / 78957895)")
-
+            print("✅ Админ создан (логин: admin | пароль: 78957895)")
         update_exchange_rates()
+
+
+        def background_update_prices():
+            while True:
+                with app.app_context():
+                    products = Product.query.all()
+                    for p in products:
+                        if p.price and "kream.co.kr" in p.price:
+                            krw = parse_kream_price(p.price)
+                            if krw and krw > 10000:
+                                p.last_krw_price = krw
+                                p.markup_krw = round(krw * MARKUP)
+                    db.session.commit()
+                time.sleep(300)
+
 
         threading.Thread(target=background_update_prices, daemon=True).start()
         threading.Thread(target=update_exchange_rates, daemon=True).start()
 
     print("\nKROSSMAG запущен → http://127.0.0.1:5000")
     print("Админка → http://127.0.0.1:5000/admin")
-    print("В поле Price вставляй ссылку на товар с Kream")
-    print("Цены загружаются последовательно по одной")
     app.run(debug=True)
