@@ -1,6 +1,8 @@
-gunicorn
-flask
-pymongo[srv]
-gunicorn
-requests
-psycopg2-binary
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+Flask-Admin==1.6.1
+Flask-Login==0.6.3
+psycopg2-binary==2.9.9
+requests==2.31.0
+gunicorn==21.2.0
+Werkzeug==3.0.2
