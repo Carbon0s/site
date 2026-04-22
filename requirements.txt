@@ -1,4 +1,6 @@
+gunicorn
 flask
 pymongo[srv]
 gunicorn
 requests
+psycopg2-binary
