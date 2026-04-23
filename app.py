@@ -7,11 +7,13 @@ import random
 import uuid
 from datetime import datetime
 
-from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, url_for, session
+from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, \
+    url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
-from flask_admin.theme import Bootstrap4Theme
+from flask_admin import Admin
+from flask_admin.theme import Bootstrap4Theme  # Импортируем именно класс темы
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import exc, text
@@ -37,11 +39,11 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # ПУЛ ДЛЯ RENDER И AIVEN: Защита от исчерпания лимитов
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "pool_pre_ping": True,       
-    "pool_recycle": 60,          
-    "pool_size": 2,              
-    "max_overflow": 2,           
-    "pool_timeout": 10           
+    "pool_pre_ping": True,
+    "pool_recycle": 60,
+    "pool_size": 2,
+    "max_overflow": 2,
+    "pool_timeout": 10
 }
 
 db = SQLAlchemy(app)
@@ -51,15 +53,18 @@ login_manager.login_view = 'login'
 
 kream_session = requests.Session()
 
+
 @app.before_request
 def assign_anonymous_session():
     session.permanent = True
     if 'uid' not in session:
         session['uid'] = str(uuid.uuid4())
 
+
 @app.teardown_appcontext
 def shutdown_session(exception=None):
     db.session.remove()
+
 
 # ================== КОНСТАНТЫ И СТАТУСЫ ==================
 USD_TO_KRW = 1483.0
@@ -90,6 +95,7 @@ BRAND_LOGOS = {
     'Adidas': 'https://i.pinimg.com/originals/ff/bb/48/ffbb4848314b68c7da1b634744356fda.png?nii=t'
 }
 
+
 # ================== ПАРСЕРЫ И РАСЧЕТЫ ==================
 def get_random_headers():
     ua_list = [
@@ -108,6 +114,7 @@ def get_random_headers():
         "Upgrade-Insecure-Requests": "1"
     }
 
+
 def update_exchange_rates():
     global USD_TO_KRW, USD_TO_RUB
     try:
@@ -116,7 +123,9 @@ def update_exchange_rates():
             data = r.json()['rates']
             USD_TO_KRW, USD_TO_RUB = data.get('KRW', USD_TO_KRW), data.get('RUB', USD_TO_RUB)
             print(f"✅ Курс обновлен: 1 USD = {USD_TO_KRW:.0f} KRW | {USD_TO_RUB:.2f} RUB")
-    except: pass
+    except:
+        pass
+
 
 def calculate_order_prices(krw):
     if not krw or krw < 10000: return 0, 0, 0, 0, 0
@@ -127,11 +136,13 @@ def calculate_order_prices(krw):
     profit = price_rub - real_rub
     return price_rub, price_usd, real_rub, real_usd, profit
 
+
 def get_display_price(krw):
     if not krw or krw < 10000: return None
     rub = round((krw / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10
     usd = round(rub / USD_TO_RUB)
     return {"rub": int(rub), "usd": int(usd)}
+
 
 # ================== POSTGRESQL МОДЕЛИ ==================
 class User(db.Model, UserMixin):
@@ -143,18 +154,20 @@ class User(db.Model, UserMixin):
     first_name = db.Column(db.String(100))
     last_name = db.Column(db.String(100))
     phone = db.Column(db.String(30))
-    
+
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
+
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
 
 class Product(db.Model):
     __tablename__ = 'products'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
-    price_url = db.Column(db.String(500), nullable=False) 
+    price_url = db.Column(db.String(500), nullable=False)
     sizes = db.Column(db.String(200))
     color = db.Column(db.String(50))
     brand = db.Column(db.String(50))
@@ -167,6 +180,7 @@ class Product(db.Model):
     last_krw_price = db.Column(db.Float, default=0.0)
     markup_krw = db.Column(db.Float, default=0.0)
 
+
 class CartItem(db.Model):
     __tablename__ = 'cart_items'
     id = db.Column(db.Integer, primary_key=True)
@@ -175,12 +189,14 @@ class CartItem(db.Model):
     size = db.Column(db.String(20))
     product = db.relationship('Product', backref='cart_items')
 
+
 class FavoriteItem(db.Model):
     __tablename__ = 'favorite_items'
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.String(100), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey('products.id', ondelete='CASCADE'), nullable=False)
     product = db.relationship('Product', backref='favorited_by')
+
 
 class Order(db.Model):
     __tablename__ = 'orders'
@@ -207,6 +223,7 @@ class Order(db.Model):
     product = db.relationship('Product')
     user = db.relationship('User', backref='orders')
 
+
 @login_manager.user_loader
 def load_user(user_id):
     try:
@@ -215,6 +232,7 @@ def load_user(user_id):
         db.session.rollback()
         return None
 
+
 # ================== ФОНОВЫЙ ПАРСЕР ==================
 def background_parser_loop():
     last_exchange_update = 0
@@ -222,9 +240,9 @@ def background_parser_loop():
         if time.time() - last_exchange_update > 3600:
             update_exchange_rates()
             last_exchange_update = time.time()
-            
+
         product_ids_to_update = []
-        
+
         with app.app_context():
             try:
                 products = Product.query.filter(
@@ -244,7 +262,7 @@ def background_parser_loop():
             price = None
             found_brand = current_brand
             found_color = current_color
-            
+
             try:
                 r = kream_session.get(url, headers=get_random_headers(), timeout=5)
                 if r.status_code == 200:
@@ -260,10 +278,13 @@ def background_parser_loop():
                     if not found_brand:
                         found_brand = next((b for b in BRANDS if b.lower() in title), None)
                     if not found_color:
-                        kor_colors = {'화이트':'white', '블랙':'black', '레드':'red', '블루':'blue', '그린':'green', '옐로우':'yellow', '핑크':'pink', '퍼플':'purple', '오렌지':'orange', '그레이':'gray', '베이지':'beige', '네이비':'navy', '브라운':'brown', '민트':'mint', '버건디':'burgundy'}
+                        kor_colors = {'화이트': 'white', '블랙': 'black', '레드': 'red', '블루': 'blue', '그린': 'green',
+                                      '옐로우': 'yellow', '핑크': 'pink', '퍼플': 'purple', '오렌지': 'orange', '그레이': 'gray',
+                                      '베이지': 'beige', '네이비': 'navy', '브라운': 'brown', '민트': 'mint', '버건디': 'burgundy'}
                         for kor, eng in kor_colors.items():
                             if kor in title or eng in title:
-                                found_color = eng; break
+                                found_color = eng;
+                                break
             except requests.exceptions.Timeout:
                 print(f"⏳ Таймаут (5 сек) для {name}")
             except Exception as e:
@@ -285,10 +306,11 @@ def background_parser_loop():
                         print(f"Ошибка записи в БД: {e}")
                     finally:
                         db.session.remove()
-                        
+
             time.sleep(3)
-                
+
         time.sleep(10)
+
 
 # ================== HTML ШАБЛОНЫ И СТИЛИ ==================
 BASE_HTML = r"""
@@ -310,12 +332,12 @@ BASE_HTML = r"""
         .card-img-top { height: 260px; object-fit: contain; }
         .carousel-item img { height: 260px; object-fit: contain; padding: 10px; background: #fff; }
         .carousel-control-prev-icon, .carousel-control-next-icon { filter: invert(1); width: 25px; height: 25px; }
-        
+
         .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.3s; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-decoration: none;}
         .mini-btn:hover { background: #fff; transform: scale(1.1) translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
         .mini-btn.fav { top: 10px; right: 10px; }
         .mini-btn.cart { top: 55px; right: 10px; }
-        
+
         /* Единая плавная анимация для кнопок */
         .hover-lift { transition: all 0.3s ease !important; }
         .hover-lift:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; }
@@ -323,7 +345,7 @@ BASE_HTML = r"""
         .btn-share:hover { background-color: #f8f9fa !important; transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; color: #6c757d; }
         .cart-checkout-btn { color: #fff !important; transition: all 0.3s ease !important; }
         .cart-checkout-btn:hover { color: #d3d3d3 !important; background-color: #218838 !important; }
-        
+
         /* Плавные переходы для вкладок заказов с линией */
         .order-tabs-container { position: relative; display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; gap: 5px; }
         .status-tab { padding: 12px 20px; cursor: pointer; color: #6c757d; font-weight: 700; text-decoration: none; position: relative; z-index: 1; transition: color 0.3s ease; }
@@ -359,7 +381,7 @@ BASE_HTML = r"""
                 <a href="/cart" class="text-white text-decoration-none icon-btn me-3" title="Корзина">
                     <img src="https://cdn-icons-png.flaticon.com/512/7244/7244725.png">
                 </a>
-                
+
                 {% if current_user.is_authenticated and getattr(current_user, 'is_admin', False) == False %}
                     <a href="/my_orders" class="btn btn-sm btn-outline-light fw-bold">📦 Заказы</a>
                     <a href="/logout" class="btn btn-sm btn-danger ms-2 fw-bold">Выход</a>
@@ -435,7 +457,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     </div>
                     <input type="hidden" name="brand" id="selectedBrands" value="{{ selected_brands_str }}">
                 </div>
-                
+
                 <div class="col-md-8 mb-3">
                     <label class="form-label fw-bold">Цвета</label>
                     <div class="d-flex flex-wrap gap-1">
@@ -568,14 +590,14 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             </div>
             {% if not product.available %}<div class="position-absolute top-50 start-50 translate-middle bg-dark text-white px-4 py-2 rounded-3 fs-4 fw-bold opacity-75">Нет в наличии</div>{% endif %}
         </div>
-        
+
         <div class="col-md-6 p-5 bg-light">
             <h2 class="fw-bold mb-2">{{ product.name }}</h2>
             <div class="d-flex align-items-center mb-4 fs-5 text-muted">
                 <span class="me-3 d-flex align-items-center"><img src="{{ BRAND_LOGOS.get(product.brand) }}" class="brand-logo-mini" style="width:24px; height:24px;"> <strong>{{ product.brand }}</strong></span>
                 <span class="d-flex align-items-center"><strong>Цвет:</strong> <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div></span>
             </div>
-            
+
             <div class="my-4 p-4 bg-white rounded-4 shadow-sm">
                 {% if product.available %}
                     <p id="price-{{ product.id }}" class="fs-1 fw-bold text-dark mb-0">
@@ -597,7 +619,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <div class="d-flex flex-wrap gap-2 mb-4">
                 <a href="/api/fav/add/{{ product.id }}" class="btn btn-outline-danger hover-lift btn-lg flex-fill fw-bold bg-white shadow-sm" style="min-width: 30%;">❤️ В избранное</a>
                 <a href="/api/cart/add/{{ product.id }}" class="btn btn-outline-dark hover-lift btn-lg flex-fill fw-bold bg-white shadow-sm {% if not product.available %}disabled{% endif %}" style="min-width: 30%;">🛒 В корзину</a>
-                
+
                 <div class="dropdown flex-fill d-flex" style="min-width: 30%;">
                     <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                         🔗 Поделиться
@@ -776,7 +798,7 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         <div class="card shadow-sm border-0 p-4 rounded-4">
             <h3 class="mb-4 fw-bold">Оформление заказа (Из корзины)</h3>
             <p class="text-danger small fw-bold mb-4">📍 Доставка работает по городу Донецк, ДНР</p>
-            
+
             <div class="mb-4 p-3 bg-light rounded">
                 <h5 class="fw-bold mb-3">Товары в заказе:</h5>
                 {% for item in items %}
@@ -791,7 +813,7 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <hr>
                 <h5 class="fw-bold text-end m-0">Итого: {{ total_rub }} ₽</h5>
             </div>
-            
+
             <form method="POST">
                 <div class="row g-3">
                     <div class="col-md-6">
@@ -815,7 +837,7 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <a href="#" onclick="unlockField('o_phone', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
                         {% endif %}
                     </div>
-                    
+
                     <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
                     <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема / Адмирала Ушакова" pattern="[А-Яа-яЁё\s\-]+" title="Название улицы (только буквы)" required></div>
                     <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" pattern="\d+[А-Яа-яЁёA-Za-z]?" title="Номер дома и опциональная буква (без пробелов)" required></div>
@@ -872,7 +894,7 @@ ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <a href="#" onclick="unlockField('o_phone', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
                         {% endif %}
                     </div>
-                    
+
                     <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
                     <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема / Адмирала Ушакова" pattern="[А-Яа-яЁё\s\-]+" title="Название улицы (только буквы)" required></div>
                     <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" pattern="\d+[А-Яа-яЁёA-Za-z]?" title="Номер дома и опциональная буква (без пробелов)" required></div>
@@ -984,7 +1006,7 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             </div>
         {% endif %}
     </div>
-    
+
     <div class="tab-pane fade" id="delivered_orders" style="display: none;">
         {% if not delivered_orders %}
             <div class="text-center py-5"><h5 class="text-muted">У вас пока нет доставленных заказов</h5></div>
@@ -1019,25 +1041,25 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             indicator.style.left = activeTab.offsetLeft + 'px';
         }
     }
-    
+
     function switchTab(el, targetId) {
         document.querySelectorAll('.status-tab').forEach(tab => tab.classList.remove('active'));
         el.classList.add('active');
-        
+
         document.querySelectorAll('.tab-pane').forEach(pane => {
             pane.style.display = 'none';
             pane.classList.remove('show', 'active');
         });
-        
+
         const targetPane = document.getElementById(targetId);
         if (targetPane) {
             targetPane.style.display = 'block';
             targetPane.classList.add('show', 'active');
         }
-        
+
         updateIndicator();
     }
-    
+
     window.addEventListener('load', updateIndicator);
     window.addEventListener('resize', updateIndicator);
 </script>
@@ -1049,7 +1071,7 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 def index():
     try:
         session['last_query'] = request.query_string.decode('utf-8')
-        
+
         search = request.args.get('search', '').strip()
         colors = request.args.get('color', '')
         brands = request.args.get('brand', '')
@@ -1058,10 +1080,10 @@ def index():
 
         query = Product.query
         if search: query = query.filter(Product.name.ilike(f'%{search}%'))
-        
+
         color_list = [c for c in colors.split(',') if c]
         if color_list: query = query.filter(Product.color.in_(color_list))
-        
+
         brand_list = [b for b in brands.split(',') if b]
         if brand_list: query = query.filter(Product.brand.in_(brand_list))
 
@@ -1075,11 +1097,11 @@ def index():
             products.append(p)
 
         return render_template_string(
-            HOME_HTML, 
-            products=products, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS, 
+            HOME_HTML,
+            products=products, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS,
             search=search, selected_colors=color_list, selected_colors_str=colors,
             selected_brands=brand_list, selected_brands_str=brands,
-            min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True), 
+            min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True),
             USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP
         )
     except exc.OperationalError as e:
@@ -1089,21 +1111,26 @@ def index():
         db.session.rollback()
         return "Внутренняя ошибка сервера", 500
 
+
 @app.route('/product/<int:product_id>')
 def product_detail(product_id):
     try:
         product = Product.query.get_or_404(product_id)
         related = Product.query.filter(Product.brand == product.brand, Product.id != product.id).limit(4).all()
-        return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS, BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+        return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS,
+                                      BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
+                                      MARKUP=MARKUP)
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
+
 
 @app.route('/update_prices')
 def update_prices():
     try:
         products = Product.query.all()
-        result = {str(p.id): get_display_price(p.last_krw_price) for p in products if get_display_price(p.last_krw_price)}
+        result = {str(p.id): get_display_price(p.last_krw_price) for p in products if
+                  get_display_price(p.last_krw_price)}
         return jsonify(result)
     except exc.OperationalError:
         db.session.rollback()
@@ -1111,6 +1138,7 @@ def update_prices():
     except Exception:
         db.session.rollback()
         return jsonify({})
+
 
 @app.route('/proxy_image')
 def proxy_image():
@@ -1120,26 +1148,33 @@ def proxy_image():
         r = requests.get(url, headers=get_random_headers(), timeout=10)
         if r.status_code == 200: return Response(r.content, mimetype=r.headers.get('Content-Type', 'image/jpeg'))
         return "Not found", 404
-    except: return "Error", 500
+    except:
+        return "Error", 500
+
 
 @app.route('/favorites')
 def favorites():
     try:
         favs = FavoriteItem.query.filter_by(session_id=session['uid']).all()
-        return render_template_string(FAVORITES_HTML, favorites=favs, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+        return render_template_string(FAVORITES_HTML, favorites=favs, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
+                                      MARKUP=MARKUP)
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
+
 
 @app.route('/cart')
 def cart():
     try:
         items = CartItem.query.filter_by(session_id=session['uid']).all()
-        total_rub = sum([get_display_price(i.product.last_krw_price)['rub'] for i in items if i.product.last_krw_price > 10000]) if items else 0
-        return render_template_string(CART_HTML, cart_items=items, total_rub=f"{total_rub:,}".replace(',', ' '), USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+        total_rub = sum([get_display_price(i.product.last_krw_price)['rub'] for i in items if
+                         i.product.last_krw_price > 10000]) if items else 0
+        return render_template_string(CART_HTML, cart_items=items, total_rub=f"{total_rub:,}".replace(',', ' '),
+                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
+
 
 @app.route('/api/fav/add/<int:product_id>')
 def add_to_fav(product_id):
@@ -1154,6 +1189,7 @@ def add_to_fav(product_id):
         db.session.rollback()
         return redirect(request.referrer or '/')
 
+
 @app.route('/api/fav/remove/<int:fav_id>')
 def remove_fav(fav_id):
     try:
@@ -1166,6 +1202,7 @@ def remove_fav(fav_id):
         db.session.rollback()
         return redirect('/favorites')
 
+
 @app.route('/api/fav/clear')
 def clear_fav():
     try:
@@ -1176,6 +1213,7 @@ def clear_fav():
         db.session.rollback()
         return redirect('/favorites')
 
+
 @app.route('/api/cart/add/<int:product_id>')
 def add_to_cart(product_id):
     try:
@@ -1183,7 +1221,7 @@ def add_to_cart(product_id):
         if not p.available:
             flash('Товар недоступен', 'danger')
             return redirect(request.referrer or '/')
-        
+
         if not CartItem.query.filter_by(session_id=session['uid'], product_id=p.id).first():
             db.session.add(CartItem(session_id=session['uid'], product=p))
             db.session.commit()
@@ -1194,6 +1232,7 @@ def add_to_cart(product_id):
     except Exception:
         db.session.rollback()
         return redirect(request.referrer or '/')
+
 
 @app.route('/api/cart/remove/<int:cart_id>')
 def remove_cart(cart_id):
@@ -1207,6 +1246,7 @@ def remove_cart(cart_id):
         db.session.rollback()
         return redirect('/cart')
 
+
 @app.route('/api/cart/clear')
 def clear_cart():
     try:
@@ -1217,6 +1257,7 @@ def clear_cart():
         db.session.rollback()
         return redirect('/cart')
 
+
 @app.route('/order', methods=['GET', 'POST'])
 def make_order():
     try:
@@ -1225,7 +1266,7 @@ def make_order():
             if not product.available:
                 flash('К сожалению, этот товар сейчас недоступен.', 'danger')
                 return redirect('/')
-                
+
             krw = product.last_krw_price or 0
             price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
             full_address = f"{request.form['street']}, д. {request.form['house']}"
@@ -1235,26 +1276,26 @@ def make_order():
             new_group = max_group + 1
 
             order = Order(
-                session_id=session['uid'], 
+                session_id=session['uid'],
                 order_group_id=new_group,
-                customer_name=request.form['name'], 
+                customer_name=request.form['name'],
                 customer_surname=request.form['surname'],
-                phone=request.form['phone'], 
-                email=request.form.get('email'), 
-                address=full_address, 
-                product_id=product.id, 
+                phone=request.form['phone'],
+                email=request.form.get('email'),
+                address=full_address,
+                product_id=product.id,
                 product_name=product.name,
-                size=request.form['size'], 
-                comment=request.form.get('comment'), 
-                price_rub_at_order=price_rub, 
+                size=request.form['size'],
+                comment=request.form.get('comment'),
+                price_rub_at_order=price_rub,
                 price_usd_at_order=price_usd,
-                real_price_rub_at_order=real_rub, 
-                real_price_usd_at_order=real_usd, 
+                real_price_rub_at_order=real_rub,
+                real_price_usd_at_order=real_usd,
                 profit_rub=profit
             )
             if current_user.is_authenticated and getattr(current_user, 'is_admin', False) == False:
                 order.user_id = current_user.id
-                
+
             db.session.add(order)
             db.session.commit()
             return redirect(url_for('thanks'))
@@ -1265,21 +1306,24 @@ def make_order():
         if not product.available:
             flash('Этот товар сейчас недоступен для заказа.', 'warning')
             return redirect('/')
-            
+
         sizes = [s.strip() for s in product.sizes.split(',') if s.strip()] if product.sizes else []
-        return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color, product_id=product.id, sizes=sizes)
+        return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color,
+                                      product_id=product.id, sizes=sizes)
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка: {str(e)}', 'danger')
         return redirect('/')
+
 
 # ================= МАРШРУТ ОФОРМЛЕНИЯ ВСЕЙ КОРЗИНЫ =================
 @app.route('/order_cart', methods=['GET', 'POST'])
 def order_cart():
     try:
         items = CartItem.query.filter_by(session_id=session['uid']).all()
-        valid_items = [i for i in items if i.product.last_krw_price and i.product.last_krw_price > 10000 and i.product.available]
-        
+        valid_items = [i for i in items if
+                       i.product.last_krw_price and i.product.last_krw_price > 10000 and i.product.available]
+
         if not valid_items:
             flash('Ваша корзина пуста или товары недоступны.', 'warning')
             return redirect('/cart')
@@ -1294,7 +1338,7 @@ def order_cart():
             for item in valid_items:
                 krw = item.product.last_krw_price
                 price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
-                
+
                 order = Order(
                     session_id=session['uid'],
                     order_group_id=new_group,
@@ -1316,12 +1360,13 @@ def order_cart():
                 if current_user.is_authenticated and not getattr(current_user, 'is_admin', False):
                     order.user_id = current_user.id
                 db.session.add(order)
-            
+
             CartItem.query.filter_by(session_id=session['uid']).delete()
             db.session.commit()
             return redirect(url_for('thanks'))
 
-        return render_template_string(ORDER_CART_HTML, items=valid_items, total_rub=f"{total_rub:,}".replace(',', ' '), USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+        return render_template_string(ORDER_CART_HTML, items=valid_items, total_rub=f"{total_rub:,}".replace(',', ' '),
+                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка оформления: {str(e)}', 'danger')
@@ -1359,6 +1404,7 @@ def register():
         db.session.rollback()
         return "Ошибка регистрации. Попробуйте еще раз.", 500
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     try:
@@ -1377,11 +1423,13 @@ def login():
         db.session.rollback()
         return "Ошибка БД. Обновите страницу.", 503
 
+
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
     return redirect('/')
+
 
 @app.route('/my_orders')
 @login_required
@@ -1402,35 +1450,56 @@ def my_orders():
 class MyAdminIndexView(AdminIndexView):
     @expose('/')
     def index(self):
-        if not current_user.is_authenticated or getattr(current_user, 'is_admin', False) == False: 
+        if not current_user.is_authenticated or getattr(current_user, 'is_admin', False) == False:
             return redirect(url_for('login'))
         return super().index()
 
+
 class ProductAdmin(ModelView):
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
-    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2', 'image3', 'image4', 'image5']
+    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2',
+                    'image3', 'image4', 'image5']
     form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
 
-    def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
-    def price_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
-    def profit_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
-    
+    def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
+        m, 'last_krw_price', 0) > 10000 else '-'
+
+    def price_rub(v, c, m,
+                  n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(
+        m, 'last_krw_price', 0) > 10000 else '-'
+
+    def profit_rub(v, c, m,
+                   n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
+        m, 'last_krw_price', 0) > 10000 else '-'
+
     column_formatters = {'real_rub': real_rub, 'price_rub': price_rub, 'profit_rub': profit_rub}
+
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
 
+
 class OrderAdmin(ModelView):
-    column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order', 'profit_rub', 'status']
+    column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order',
+                   'profit_rub', 'status']
     can_export = True
     form_choices = {'status': ORDER_STATUSES}
+
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
-    
+
     def date_format(v, c, m, n):
         date_str = m.date.strftime('%Y-%m-%d %H:%M') if m.date else ""
         return f"{date_str} (№{m.order_group_id})" if getattr(m, 'order_group_id', None) else date_str
-        
+
     column_formatters = {'date': date_format}
 
-admin = Admin(app, name='KROSSMAG Админ', theme=Bootstrap4Theme(), index_view=MyAdminIndexView())
+
+# Было: theme=Bootstrap4() или template_mode='bootstrap4'
+# Стало:
+admin = Admin(
+    app,
+    name='KROSSMAG Админ',
+    theme=Bootstrap4Theme(),
+    index_view=MyAdminIndexView()
+)
 admin.add_view(ProductAdmin(Product, db.session))
 admin.add_view(OrderAdmin(Order, db.session))
 
@@ -1440,19 +1509,23 @@ def init_db():
     for attempt in range(5):
         try:
             db.create_all()
-            
+
             inspector = db.inspect(db.engine)
             with db.engine.begin() as conn:
                 if 'users' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('users')]
-                    if 'first_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
-                    if 'last_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
+                    if 'first_name' not in cols: conn.execute(
+                        text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
+                    if 'last_name' not in cols: conn.execute(
+                        text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
                     if 'phone' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(30)"))
                 if 'orders' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('orders')]
-                    if 'user_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
-                    if 'order_group_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
-            
+                    if 'user_id' not in cols: conn.execute(
+                        text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+                    if 'order_group_id' not in cols: conn.execute(
+                        text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
+
             if not User.query.filter_by(username='admin').first():
                 admin_user = User(username='admin', is_admin=True)
                 admin_user.set_password('78957895kross')
@@ -1462,12 +1535,13 @@ def init_db():
             break
         except exc.OperationalError as e:
             db.session.rollback()
-            print(f"Попытка переподключения к БД при старте... ({attempt+1}/5)")
+            print(f"Попытка переподключения к БД при старте... ({attempt + 1}/5)")
             time.sleep(2)
         except Exception as e:
             db.session.rollback()
             print(f"Критическая ошибка при инициализации БД: {e}")
             break
+
 
 def background_parser_loop():
     last_exchange_update = 0
@@ -1475,9 +1549,9 @@ def background_parser_loop():
         if time.time() - last_exchange_update > 3600:
             update_exchange_rates()
             last_exchange_update = time.time()
-            
+
         product_ids_to_update = []
-        
+
         with app.app_context():
             try:
                 products = Product.query.filter(
@@ -1495,7 +1569,7 @@ def background_parser_loop():
             price = None
             found_brand = current_brand
             found_color = current_color
-            
+
             try:
                 r = kream_session.get(url, headers=get_random_headers(), timeout=5)
                 if r.status_code == 200:
@@ -1511,10 +1585,13 @@ def background_parser_loop():
                     if not found_brand:
                         found_brand = next((b for b in BRANDS if b.lower() in title), None)
                     if not found_color:
-                        kor_colors = {'화이트':'white', '블랙':'black', '레드':'red', '블루':'blue', '그린':'green', '옐로우':'yellow', '핑크':'pink', '퍼플':'purple', '오렌지':'orange', '그레이':'gray', '베이지':'beige', '네이비':'navy', '브라운':'brown', '민트':'mint', '버건디':'burgundy'}
+                        kor_colors = {'화이트': 'white', '블랙': 'black', '레드': 'red', '블루': 'blue', '그린': 'green',
+                                      '옐로우': 'yellow', '핑크': 'pink', '퍼플': 'purple', '오렌지': 'orange', '그레이': 'gray',
+                                      '베이지': 'beige', '네이비': 'navy', '브라운': 'brown', '민트': 'mint', '버건디': 'burgundy'}
                         for kor, eng in kor_colors.items():
                             if kor in title or eng in title:
-                                found_color = eng; break
+                                found_color = eng;
+                                break
             except requests.exceptions.Timeout:
                 print(f"⏳ Таймаут (5 сек) для {name}")
             except Exception as e:
@@ -1534,10 +1611,11 @@ def background_parser_loop():
                     except Exception as e:
                         db.session.rollback()
                         print(f"Ошибка записи в БД: {e}")
-                        
+
             time.sleep(3)
-                
+
         time.sleep(10)
+
 
 if __name__ == '__main__':
     with app.app_context():
