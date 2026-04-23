@@ -53,6 +53,15 @@ login_manager.login_view = 'login'
 
 kream_session = requests.Session()
 
+@app.route('/yandex_86464e3ed56c660d.html')
+def yandex_verification():
+    return '''<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    </head>
+    <body>Verification: 86464e3ed56c660d</body>
+</html>'''
+
 
 @app.before_request
 def assign_anonymous_session():
@@ -369,6 +378,20 @@ BASE_HTML = r"""
         .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 6px; background: #f8f9fa; font-weight: 600;}
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
     </style>
+    <meta charset="UTF-8">
+    <title>KROSSMAG</title>
+
+    <link rel="icon" type="image/png" href="/image/krossmag.png">
+
+    <script type="text/javascript">
+       (function(m,e,t,r,i,k,a){
+           m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+           m[i].l=1*new Date();
+           for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+           k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+       })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=108734484', 'ym');
+       ym(108734484, 'init', {ssr:true, webvisor:true, clickmap:true, trackLinks:true, accurateTrackBounce:true});
+    </script>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
@@ -426,6 +449,7 @@ BASE_HTML = r"""
         }
         setInterval(updatePrices, 10000);
     </script>
+    {% block content %}{% endblock %}
 </body>
 </html>
 """
@@ -1490,16 +1514,7 @@ class OrderAdmin(ModelView):
         return f"{date_str} (№{m.order_group_id})" if getattr(m, 'order_group_id', None) else date_str
 
     column_formatters = {'date': date_format}
-
-
-# Было: theme=Bootstrap4() или template_mode='bootstrap4'
-# Стало:
-admin = Admin(
-    app,
-    name='KROSSMAG Админ',
-    theme=Bootstrap4Theme(),
-    index_view=MyAdminIndexView()
-)
+admin = Admin(app, name='KROSSMAG Админ', theme=Bootstrap4Theme(), index_view=MyAdminIndexView())
 admin.add_view(ProductAdmin(Product, db.session))
 admin.add_view(OrderAdmin(Order, db.session))
 
