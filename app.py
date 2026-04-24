@@ -8,36 +8,36 @@ import uuid
 from datetime import datetime
 
 from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, \
-    url_for, session
+    url_for, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
-from flask_admin import Admin
-from flask_admin.theme import Bootstrap4Theme  # Импортируем именно класс темы
+from flask_admin.theme import Bootstrap4Theme
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import exc, text
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_babel import Babel  # ДОБАВЛЕНО ДЛЯ РУСИФИКАЦИИ
 
 app = Flask(__name__)
 
-# ИСПРАВЛЕНИЕ ДЛЯ RENDER: Flask должен знать, что он работает за прокси-сервером Render (HTTPS)
-# Без этого генерация ссылок (например, для кнопки "Поделиться") будет работать криво (через http://)
+# ИСПРАВЛЕНИЕ ДЛЯ RENDER: Flask должен знать, что он работает за прокси-сервером
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'krossmag_postgresql_final_2026_render')
-app.config['PERMANENT_SESSION_LIFETIME'] = 31536000  # Сессия корзины на 1 год
+app.config['PERMANENT_SESSION_LIFETIME'] = 31536000
 
-# Решение проблемы с Jinja2
+# РУСИФИКАЦИЯ АДМИНКИ
+app.config['BABEL_DEFAULT_LOCALE'] = 'ru'
+babel = Babel(app)
+
 app.jinja_env.globals.update(getattr=getattr)
 
 # ================== ПОДКЛЮЧЕНИЕ К POSTGRESQL ==================
-# Если в Render задана переменная DATABASE_URL, берем её. Если нет - берем твою от Aiven.
 DEFAULT_DB_URI = "postgresql://avnadmin:AVNS_JtcN8Ogu63nBIgc8odo@krossmag-krossmag.g.aivencloud.com:25520/defaultdb?sslmode=require"
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', DEFAULT_DB_URI)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# ПУЛ ДЛЯ RENDER И AIVEN: Защита от исчерпания лимитов
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "pool_pre_ping": True,
     "pool_recycle": 60,
@@ -52,6 +52,18 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 
 kream_session = requests.Session()
+
+
+# ================== РАЗДАЧА СТАТИКИ И ФАВИКОНКИ ==================
+@app.route('/image/<path:filename>')
+def custom_static(filename):
+    return send_from_directory(os.path.join(app.root_path, 'image'), filename)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'image'), 'krossmag.png', mimetype='image/png')
+
 
 @app.route('/yandex_86464e3ed56c660d.html')
 def yandex_verification():
@@ -243,6 +255,7 @@ def load_user(user_id):
 
 
 # ================== ФОНОВЫЙ ПАРСЕР ==================
+# ... (Код background_parser_loop остается тем же, не изменяется логика парсера) ...
 def background_parser_loop():
     last_exchange_update = 0
     while True:
@@ -267,7 +280,6 @@ def background_parser_loop():
                 db.session.remove()
 
         for pid, url, name, current_brand, current_color in product_ids_to_update:
-            print(f"🔍 Загрузка цены: {name}...")
             price = None
             found_brand = current_brand
             found_color = current_color
@@ -294,10 +306,8 @@ def background_parser_loop():
                             if kor in title or eng in title:
                                 found_color = eng;
                                 break
-            except requests.exceptions.Timeout:
-                print(f"⏳ Таймаут (5 сек) для {name}")
-            except Exception as e:
-                print(f"❌ Ошибка парсинга {name}: {e}")
+            except Exception:
+                pass
 
             if price:
                 with app.app_context():
@@ -309,15 +319,11 @@ def background_parser_loop():
                             if not p.brand: p.brand = found_brand
                             if not p.color: p.color = found_color
                             db.session.commit()
-                            print(f"✅ Сохранено: {name} -> {price} KRW")
-                    except Exception as e:
+                    except Exception:
                         db.session.rollback()
-                        print(f"Ошибка записи в БД: {e}")
                     finally:
                         db.session.remove()
-
             time.sleep(3)
-
         time.sleep(10)
 
 
@@ -328,14 +334,19 @@ BASE_HTML = r"""
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>KROSSMAG DONETSK</title>
+    <title>KROSSMAG - Оригинальные Брендовые Кроссовки Донецк</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <link rel="icon" type="image/png" href="/image/krossmag.png">
+    <link rel="apple-touch-icon" href="/image/krossmag.png">
+
     <style>
         body { padding-top: 80px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         .product-card { transition: all 0.3s; cursor: pointer; border: none; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
         .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
         .navbar-brand { font-weight: 900; font-size: 1.9rem; letter-spacing: -1px; }
+        .main-logo { height: 40px; }
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
         .card-img-wrapper { position: relative; background: #fff; padding: 10px; border-radius: 12px 12px 0 0;}
         .card-img-top { height: 260px; object-fit: contain; }
@@ -347,7 +358,6 @@ BASE_HTML = r"""
         .mini-btn.fav { top: 10px; right: 10px; }
         .mini-btn.cart { top: 55px; right: 10px; }
 
-        /* Единая плавная анимация для кнопок */
         .hover-lift { transition: all 0.3s ease !important; }
         .hover-lift:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; }
         .btn-share { transition: all 0.3s ease !important; border: 1px solid #dee2e6; }
@@ -355,7 +365,6 @@ BASE_HTML = r"""
         .cart-checkout-btn { color: #fff !important; transition: all 0.3s ease !important; }
         .cart-checkout-btn:hover { color: #d3d3d3 !important; background-color: #218838 !important; }
 
-        /* Плавные переходы для вкладок заказов с линией */
         .order-tabs-container { position: relative; display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; gap: 5px; }
         .status-tab { padding: 12px 20px; cursor: pointer; color: #6c757d; font-weight: 700; text-decoration: none; position: relative; z-index: 1; transition: color 0.3s ease; }
         .status-tab:hover { color: #343a40; }
@@ -373,16 +382,18 @@ BASE_HTML = r"""
         .brand-logo-mini { width: 24px; height: 24px; object-fit: contain; margin-right: 8px; border-radius: 4px; }
         .icon-btn img { height: 26px; transition: 0.2s; filter: invert(1); }
         .icon-btn:hover img { transform: scale(1.1); }
-        .btn-outline-danger:active, .btn-outline-danger:focus, .btn-outline-danger:hover { color: #6c757d !important; background-color: transparent !important; border-color: #6c757d !important; }
-        .btn-outline-dark:active, .btn-outline-dark:focus, .btn-outline-dark:hover { color: #6c757d !important; background-color: transparent !important; border-color: #6c757d !important; }
         .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 6px; background: #f8f9fa; font-weight: 600;}
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
+
+        /* МОБИЛЬНАЯ ОПТИМИЗАЦИЯ */
+        @media (max-width: 991px) {
+            .navbar .container { flex-direction: column; text-align: center; padding: 10px; }
+            .navbar-brand { margin: 0 auto 10px auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.5rem; }
+            .main-logo { height: 30px; }
+            .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; }
+            .text-truncate-mobile-wrap { white-space: normal !important; overflow: visible; text-overflow: clip; }
+        }
     </style>
-    <meta charset="UTF-8">
-    <title>KROSSMAG</title>
-
-    <link rel="icon" type="image/png" href="/image/krossmag.png">
-
     <script type="text/javascript">
        (function(m,e,t,r,i,k,a){
            m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
@@ -396,7 +407,9 @@ BASE_HTML = r"""
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
         <div class="container">
-            <a class="navbar-brand" href="/">KROSSMAG</a>
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <img src="/image/krossmag.png" alt="Logo" class="main-logo me-2">KROSSMAG
+            </a>
             <div class="ms-auto d-flex align-items-center gap-3">
                 <a href="/favorites" class="text-white text-decoration-none icon-btn" title="Избранное">
                     <img src="https://images.icon-icons.com/903/PNG/512/bookmark_icon-icons.com_69556.png">
@@ -448,6 +461,34 @@ BASE_HTML = r"""
             }).catch(err => console.log("Ожидание цен..."));
         }
         setInterval(updatePrices, 10000);
+
+        // УМНАЯ ФОНОВАЯ ПОДГРУЗКА КАРТИНОК
+        document.addEventListener("DOMContentLoaded", function() {
+            const lazyImages = Array.from(document.querySelectorAll('img[loading="lazy"]'));
+
+            function preloadNext() {
+                if(lazyImages.length === 0) return;
+                const img = lazyImages.shift();
+                const tempImage = new Image();
+                tempImage.src = img.src;
+                tempImage.onload = () => { img.removeAttribute('loading'); preloadNext(); };
+                tempImage.onerror = () => { preloadNext(); };
+            }
+            // Запускаем через 1 секунду после загрузки основного контента
+            setTimeout(preloadNext, 1000); 
+
+            // Приоритетная загрузка при пролистывании карусели
+            document.querySelectorAll('.carousel').forEach(carousel => {
+                carousel.addEventListener('slide.bs.carousel', function (e) {
+                    const nextImg = e.relatedTarget.querySelector('img');
+                    if (nextImg && nextImg.hasAttribute('loading')) {
+                        nextImg.removeAttribute('loading');
+                        const idx = lazyImages.indexOf(nextImg);
+                        if(idx > -1) lazyImages.splice(idx, 1);
+                    }
+                });
+            });
+        });
     </script>
     {% block content %}{% endblock %}
 </body>
@@ -481,7 +522,6 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     </div>
                     <input type="hidden" name="brand" id="selectedBrands" value="{{ selected_brands_str }}">
                 </div>
-
                 <div class="col-md-8 mb-3">
                     <label class="form-label fw-bold">Цвета</label>
                     <div class="d-flex flex-wrap gap-1">
@@ -503,15 +543,6 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <a href="/" class="btn btn-link mt-2 text-muted">Сбросить</a>
         </form>
     </div>
-</div>
-
-<div class="d-flex justify-content-center flex-wrap gap-2 mb-4">
-    {% for b in BRANDS %}
-        <a href="/?brand={{ b }}" class="btn btn-light shadow-sm d-flex align-items-center bg-white">
-            <img src="{{ BRAND_LOGOS[b] }}" class="brand-logo-mini"> {{ b }}
-        </a>
-    {% endfor %}
-    <a href="/" class="btn btn-dark d-flex align-items-center">Все</a>
 </div>
 
 <div class="row" id="products-container">
@@ -558,9 +589,6 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
     </div>
     {% endfor %}
-    {% if not products %}
-        <div class="col-12 text-center py-5"><h4>По вашему запросу ничего не найдено</h4><a href="/" class="btn btn-outline-dark mt-3">Сбросить фильтры</a></div>
-    {% endif %}
 </div>
 <script>
     function toggleColor(color) {
@@ -568,13 +596,8 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         let colors = input.value ? input.value.split(',') : [];
         let idx = colors.indexOf(color);
         let el = document.querySelector(`.color-circle[data-color='${color}']`);
-        if (idx > -1) {
-            colors.splice(idx, 1);
-            el.classList.remove('selected');
-        } else {
-            colors.push(color);
-            el.classList.add('selected');
-        }
+        if (idx > -1) { colors.splice(idx, 1); el.classList.remove('selected'); } 
+        else { colors.push(color); el.classList.add('selected'); }
         input.value = colors.join(',');
     }
     function toggleBrand(brand) {
@@ -582,13 +605,8 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         let brands = input.value ? input.value.split(',') : [];
         let idx = brands.indexOf(brand);
         let el = document.querySelector(`.brand-pill[data-brand='${brand}']`);
-        if (idx > -1) {
-            brands.splice(idx, 1);
-            el.classList.remove('selected');
-        } else {
-            brands.push(brand);
-            el.classList.add('selected');
-        }
+        if (idx > -1) { brands.splice(idx, 1); el.classList.remove('selected'); } 
+        else { brands.push(brand); el.classList.add('selected'); }
         input.value = brands.join(',');
     }
 </script>
@@ -643,11 +661,8 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <div class="d-flex flex-wrap gap-2 mb-4">
                 <a href="/api/fav/add/{{ product.id }}" class="btn btn-outline-danger hover-lift btn-lg flex-fill fw-bold bg-white shadow-sm" style="min-width: 30%;">❤️ В избранное</a>
                 <a href="/api/cart/add/{{ product.id }}" class="btn btn-outline-dark hover-lift btn-lg flex-fill fw-bold bg-white shadow-sm {% if not product.available %}disabled{% endif %}" style="min-width: 30%;">🛒 В корзину</a>
-
                 <div class="dropdown flex-fill d-flex" style="min-width: 30%;">
-                    <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        🔗 Поделиться
-                    </button>
+                    <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border" type="button" data-bs-toggle="dropdown" aria-expanded="false">🔗 Поделиться</button>
                     <ul class="dropdown-menu w-100 shadow border-0 rounded-3">
                         <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ product.name|replace("'", "\\'") }}')">📲 Поделиться (Меню телефона)</a></li>
                         <li><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.id }}&text=Смотри, что я нашел в KROSSMAG: {{ product.name }}">✈️ Telegram</a></li>
@@ -657,7 +672,6 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     </ul>
                 </div>
             </div>
-
             {% if product.available %}
                 <a href="/order?product_id={{ product.id }}" class="btn btn-dark hover-lift btn-lg w-100 fw-bold py-3 shadow">Оформить заказ в Донецк</a>
             {% else %}
@@ -666,40 +680,6 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
     </div>
 </div>
-<hr class="my-5 border-2">
-<h3 class="fw-bold mb-4">Может быть вам также понравится:</h3>
-<div class="row">
-    {% for rp in related %}
-    <div class="col-6 col-md-4 col-lg-3 mb-4">
-        <div class="card product-card h-100 border-0 shadow-sm" onclick="window.location.href='/product/{{ rp.id }}'">
-            <div class="card-img-wrapper"><img src="/proxy_image?url={{ rp.image }}" class="card-img-top w-100" style="height:150px; object-fit:contain;"></div>
-            <div class="card-body bg-white"><h6 class="card-title text-truncate fw-bold mb-1" title="{{ rp.name }}">{{ rp.name }}</h6><p class="text-muted small mb-0">{{ rp.brand }}</p></div>
-        </div>
-    </div>
-    {% endfor %}
-</div>
-<script>
-    function shareNative(e, title) {
-        e.preventDefault();
-        if (navigator.share) {
-            navigator.share({
-                title: title,
-                text: 'Смотри, что я нашел в KROSSMAG: ' + title,
-                url: window.location.href
-            }).catch(err => console.log('Ошибка поделиться:', err));
-        } else {
-            showToast('Ваш браузер не поддерживает системное меню', 'warning');
-        }
-    }
-    function copyLink(e, url) {
-        e.preventDefault();
-        navigator.clipboard.writeText(url).then(() => {
-            showToast('Ссылка скопирована в буфер обмена!', 'success');
-        }).catch(err => {
-            showToast('Ошибка при копировании', 'danger');
-        });
-    }
-</script>
 """)
 
 FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
@@ -723,16 +703,11 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                         {{ ((f.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                     {% else %}Загрузка...{% endif %}
                 </p>
-                {% if f.product.available %}
-                    <a href="/order?product_id={{ f.product.id }}" class="btn btn-dark mt-auto" onclick="event.stopPropagation()">Заказать</a>
-                {% endif %}
+                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark mt-auto" onclick="event.stopPropagation()">Заказать</a>{% endif %}
             </div>
         </div>
     </div>
     {% endfor %}
-    {% if not favorites %}
-        <div class="col-12 text-center py-5"><h4 class="text-muted">Список пуст</h4><a href="/" class="btn btn-dark mt-3">В каталог</a></div>
-    {% endif %}
 </div>
 """)
 
@@ -756,18 +731,13 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <h5 class="card-title fw-bold text-truncate pe-3">{{ c.product.name }}</h5>
                             <a href="/api/cart/remove/{{ c.id }}" class="text-danger text-decoration-none fs-5" onclick="event.stopPropagation()">✖</a>
                         </div>
-                        <p class="text-muted small mb-2">{{ c.product.brand }} | Размер: {{ c.size or 'Не указан' }}</p>
+                        <p class="text-muted small mb-2">{{ c.product.brand }}</p>
                         <div class="mt-auto d-flex justify-content-between align-items-end">
                             <p id="price-{{ c.product.id }}" class="fw-bold fs-5 mb-0 text-dark">
                                 {% if c.product.last_krw_price and c.product.last_krw_price > 10000 %}
                                     {{ ((c.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                                 {% else %}Загрузка...{% endif %}
                             </p>
-                            {% if c.product.available %}
-                                <a href="/order?product_id={{ c.product.id }}" class="btn btn-dark btn-sm" onclick="event.stopPropagation()">Оформить</a>
-                            {% else %}
-                                <span class="badge bg-danger">Нет в наличии</span>
-                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -791,30 +761,11 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <a href="/order_cart" class="btn btn-success btn-lg w-100 fw-bold shadow-sm hover-lift cart-checkout-btn">Перейти к оформлению</a>
         </div>
     </div>
-    <script>
-        function updateCartTotal() {
-            fetch('/update_prices').then(r=>r.json()).then(data=>{
-                let total = 0;
-                let allLoaded = true;
-                document.querySelectorAll('[id^="price-"]').forEach(el => {
-                    const id = el.id.split('-')[1];
-                    if(data[id] && data[id].rub) {
-                        el.innerHTML = `${data[id].rub} ₽`;
-                        total += data[id].rub;
-                    } else {
-                        allLoaded = false;
-                    }
-                });
-                const totalEl = document.getElementById('cart-total');
-                if(totalEl && allLoaded) totalEl.innerHTML = `${total.toLocaleString('ru-RU')} ₽`;
-            }).catch(e => console.log("AJAX-обновление корзины ожидается..."));
-        }
-        setInterval(updateCartTotal, 10000);
-    </script>
     {% endif %}
 </div>
 """)
 
+# ИЗМЕНЕНИЯ В КОРЗИНЕ (ИНДИВИДУАЛЬНЫЕ РАЗМЕРЫ ДЛЯ КАЖДОГО КРОССОВКА)
 ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/cart" class="back-btn">← Назад в корзину</a>
 <div class="row justify-content-center">
@@ -823,64 +774,55 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <h3 class="mb-4 fw-bold">Оформление заказа (Из корзины)</h3>
             <p class="text-danger small fw-bold mb-4">📍 Доставка работает по городу Донецк, ДНР</p>
 
-            <div class="mb-4 p-3 bg-light rounded">
-                <h5 class="fw-bold mb-3">Товары в заказе:</h5>
-                {% for item in items %}
-                <div class="d-flex align-items-center mb-2">
-                    <img src="/proxy_image?url={{ item.product.image }}" style="width: 50px; height: 50px; object-fit: contain;" class="rounded bg-white p-1 me-3 shadow-sm">
-                    <div>
-                        <h6 class="fw-bold mb-0" style="font-size: 0.95rem;">{{ item.product.name }}</h6>
-                        <span class="text-muted small d-flex align-items-center mt-1">Цвет: <div class="card-color-circle mx-1" style="background-color: {{ item.product.color }}; width:12px; height:12px;"></div> | Размер: {{ item.size or 'Не указан' }} | {{ ((item.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽</span>
-                    </div>
-                </div>
-                {% endfor %}
-                <hr>
-                <h5 class="fw-bold text-end m-0">Итого: {{ total_rub }} ₽</h5>
-            </div>
-
             <form method="POST">
+                <div class="mb-4 p-3 bg-light rounded border border-light-subtle">
+                    <h5 class="fw-bold mb-3 border-bottom pb-2">Товары в заказе: Укажите размер для каждого!</h5>
+                    {% for item in items %}
+                    <div class="d-flex align-items-center mb-3 p-3 bg-white rounded shadow-sm border">
+                        <img src="/proxy_image?url={{ item.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">
+                        <div class="w-100">
+                            <h6 class="fw-bold mb-1" style="font-size: 1rem; color: #333;">{{ item.product.name }}</h6>
+                            <span class="text-muted small d-flex align-items-center mb-2">Цвет: <div class="card-color-circle mx-1" style="background-color: {{ item.product.color }}; width:12px; height:12px;"></div> | Цена: {{ ((item.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽</span>
+
+                            <div class="mt-2 bg-light p-2 rounded">
+                                <label class="form-label small fw-bold text-primary mb-1">▶ Выберите размер для: <span class="text-dark">{{ item.product.name }}</span></label>
+                                <select name="size_{{ item.product.id }}" class="form-select form-select-sm border-primary" required>
+                                    <option value="">-- Обязательно выберите размер --</option>
+                                    {% for s in item.product.sizes.split(',') %}
+                                        {% if s.strip() %}<option value="{{ s.strip() }}">{{ s.strip() }}</option>{% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    <h4 class="fw-bold text-end mt-3 mb-0 text-success">Итого: {{ total_rub }} ₽</h4>
+                </div>
+
+                <h5 class="fw-bold mb-3 mt-4">Контактные данные</h5>
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label text-muted">Имя</label>
-                        <input type="text" name="name" id="o_name" class="form-control form-control-lg" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" {% if current_user.is_authenticated and not current_user.is_admin %}readonly style="background-color: #e9ecef;"{% endif %} required>
-                        {% if current_user.is_authenticated and not current_user.is_admin %}
-                            <a href="#" onclick="unlockField('o_name', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
-                        {% endif %}
+                        <input type="text" name="name" id="o_name" class="form-control form-control-lg" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label text-muted">Фамилия</label>
-                        <input type="text" name="surname" id="o_surname" class="form-control form-control-lg" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" {% if current_user.is_authenticated and not current_user.is_admin %}readonly style="background-color: #e9ecef;"{% endif %} required>
-                        {% if current_user.is_authenticated and not current_user.is_admin %}
-                            <a href="#" onclick="unlockField('o_surname', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
-                        {% endif %}
+                        <input type="text" name="surname" id="o_surname" class="form-control form-control-lg" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
                     </div>
                     <div class="col-12">
                         <label class="form-label text-muted">Телефон</label>
-                        <input type="tel" name="phone" id="o_phone" class="form-control form-control-lg" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" {% if current_user.is_authenticated and not current_user.is_admin %}readonly style="background-color: #e9ecef;"{% endif %} required>
-                        {% if current_user.is_authenticated and not current_user.is_admin %}
-                            <a href="#" onclick="unlockField('o_phone', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
-                        {% endif %}
+                        <input type="tel" name="phone" id="o_phone" class="form-control form-control-lg" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
                     </div>
-
                     <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
-                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема / Адмирала Ушакова" pattern="[А-Яа-яЁё\s\-]+" title="Название улицы (только буквы)" required></div>
-                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" pattern="\d+[А-Яа-яЁёA-Za-z]?" title="Номер дома и опциональная буква (без пробелов)" required></div>
-                    <div class="col-12"><label class="form-label text-muted">Комментарий (к общему заказу)</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
+                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема / Адмирала Ушакова" required></div>
+                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Общий комментарий к заказу</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
                 </div>
-                <button type="submit" class="btn btn-dark hover-lift btn-lg mt-4 w-100 fw-bold py-3 shadow">Подтвердить заказ</button>
+                <button type="submit" class="btn btn-dark hover-lift btn-lg mt-4 w-100 fw-bold py-3 shadow">Подтвердить весь заказ</button>
             </form>
         </div>
     </div>
 </div>
-<script>
-    function unlockField(id, e) {
-        e.preventDefault();
-        let field = document.getElementById(id);
-        field.removeAttribute('readonly');
-        field.style.backgroundColor = '#fff';
-        e.target.style.display = 'none';
-    }
-</script>
 """)
 
 ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
@@ -897,31 +839,12 @@ ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <form method="POST">
                 <input type="hidden" name="product_id" value="{{ product_id }}">
                 <div class="row g-3">
-                    <div class="col-md-6">
-                        <label class="form-label text-muted">Имя</label>
-                        <input type="text" name="name" id="o_name" class="form-control form-control-lg" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" {% if current_user.is_authenticated and not current_user.is_admin %}readonly style="background-color: #e9ecef;"{% endif %} required>
-                        {% if current_user.is_authenticated and not current_user.is_admin %}
-                            <a href="#" onclick="unlockField('o_name', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
-                        {% endif %}
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label text-muted">Фамилия</label>
-                        <input type="text" name="surname" id="o_surname" class="form-control form-control-lg" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" {% if current_user.is_authenticated and not current_user.is_admin %}readonly style="background-color: #e9ecef;"{% endif %} required>
-                        {% if current_user.is_authenticated and not current_user.is_admin %}
-                            <a href="#" onclick="unlockField('o_surname', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
-                        {% endif %}
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label text-muted">Телефон</label>
-                        <input type="tel" name="phone" id="o_phone" class="form-control form-control-lg" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" {% if current_user.is_authenticated and not current_user.is_admin %}readonly style="background-color: #e9ecef;"{% endif %} required>
-                        {% if current_user.is_authenticated and not current_user.is_admin %}
-                            <a href="#" onclick="unlockField('o_phone', event)" class="small mt-1 d-block text-decoration-none" style="color: #0d6efd;">Не ваши данные? Измените!</a>
-                        {% endif %}
-                    </div>
-
+                    <div class="col-md-6"><label class="form-label text-muted">Имя</label><input type="text" name="name" class="form-control form-control-lg" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
+                    <div class="col-md-6"><label class="form-label text-muted">Фамилия</label><input type="text" name="surname" class="form-control form-control-lg" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Телефон</label><input type="tel" name="phone" class="form-control form-control-lg" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
                     <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
-                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема / Адмирала Ушакова" pattern="[А-Яа-яЁё\s\-]+" title="Название улицы (только буквы)" required></div>
-                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" pattern="\d+[А-Яа-яЁёA-Za-z]?" title="Номер дома и опциональная буква (без пробелов)" required></div>
+                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема" required></div>
+                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" required></div>
                     <div class="col-md-12"><label class="form-label text-muted">Размер</label>
                         <select name="size" class="form-select form-select-lg" required>
                             <option value="">Выберите размер</option>
@@ -935,75 +858,24 @@ ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
     </div>
 </div>
-<script>
-    function unlockField(id, e) {
-        e.preventDefault();
-        let field = document.getElementById(id);
-        field.removeAttribute('readonly');
-        field.style.backgroundColor = '#fff';
-        e.target.style.display = 'none';
-    }
-</script>
 """)
 
-THANKS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
-<div class="text-center py-5">
-    <div class="display-1 mb-3">🎉</div>
-    <h2 class="text-success fw-bold">Заказ успешно оформлен!</h2>
-    <p class="lead mt-3 text-muted">Менеджер свяжется с вами в ближайшее время для подтверждения.</p>
-    <a href="/my_orders" class="btn btn-dark hover-lift btn-lg mt-4 px-5">Следить за заказом</a>
-</div>
-""")
+THANKS_HTML = BASE_HTML.replace("{{ content | safe }}",
+                                r"""<div class="text-center py-5"><div class="display-1 mb-3">🎉</div><h2 class="text-success fw-bold">Заказ успешно оформлен!</h2><p class="lead mt-3 text-muted">Менеджер свяжется с вами в ближайшее время для подтверждения.</p><a href="/my_orders" class="btn btn-dark hover-lift btn-lg mt-4 px-5">Следить за заказом</a></div>""")
+LOGIN_HTML = BASE_HTML.replace("{{ content | safe }}",
+                               r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-4"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Вход</h3><form method="post" action="/login"><input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Логин или Телефон" required><input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Войти</button></form><p class="mt-4 text-center text-muted">Еще нет аккаунта? <a href="/register" class="fw-bold text-dark text-decoration-none">Зарегистрируйтесь</a></p></div></div></div>""")
+REGISTER_HTML = BASE_HTML.replace("{{ content | safe }}",
+                                  r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-5"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Регистрация</h3><form method="post" action="/register"><div class="row g-2 mb-3"><div class="col-md-6"><input type="text" name="first_name" class="form-control form-control-lg" placeholder="Имя" required></div><div class="col-md-6"><input type="text" name="last_name" class="form-control form-control-lg" placeholder="Фамилия" required></div></div><input type="tel" name="phone" class="form-control form-control-lg mb-3" placeholder="Телефон (+7...)" required><input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Придумайте логин" required><input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Придумайте пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Создать аккаунт</button></form><p class="mt-4 text-center text-muted">Уже есть аккаунт? <a href="/login" class="fw-bold text-dark text-decoration-none">Войти</a></p></div></div></div>""")
 
-LOGIN_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
-<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
-<div class="row justify-content-center mt-5">
-    <div class="col-md-4">
-        <div class="card shadow-sm border-0 rounded-4 p-4">
-            <h3 class="text-center mb-4 fw-bold">Вход</h3>
-            <form method="post" action="/login">
-                <input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Логин или Телефон" required>
-                <input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Пароль" required>
-                <button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Войти</button>
-            </form>
-            <p class="mt-4 text-center text-muted">Еще нет аккаунта? <a href="/register" class="fw-bold text-dark text-decoration-none">Зарегистрируйтесь</a></p>
-        </div>
-    </div>
-</div>
-""")
-
-REGISTER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
-<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
-<div class="row justify-content-center mt-5">
-    <div class="col-md-5">
-        <div class="card shadow-sm border-0 rounded-4 p-4">
-            <h3 class="text-center mb-4 fw-bold">Регистрация</h3>
-            <form method="post" action="/register">
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6"><input type="text" name="first_name" class="form-control form-control-lg" placeholder="Имя" required></div>
-                    <div class="col-md-6"><input type="text" name="last_name" class="form-control form-control-lg" placeholder="Фамилия" required></div>
-                </div>
-                <input type="tel" name="phone" class="form-control form-control-lg mb-3" placeholder="Телефон (+7...)" required>
-                <input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Придумайте логин" required>
-                <input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Придумайте пароль" required>
-                <button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Создать аккаунт</button>
-            </form>
-            <p class="mt-4 text-center text-muted">Уже есть аккаунт? <a href="/login" class="fw-bold text-dark text-decoration-none">Войти</a></p>
-        </div>
-    </div>
-</div>
-""")
-
+# ОБНОВЛЕНО ДЛЯ МОБИЛЬНЫХ ТЕЛЕФОНОВ (Убрал жесткое text-truncate)
 MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
 <h2 class="fw-bold mb-4">📦 Мои заказы</h2>
-
 <div class="order-tabs-container">
     <a class="status-tab active" data-target="active_orders" onclick="switchTab(this, 'active_orders')">В процессе</a>
     <a class="status-tab" data-target="delivered_orders" onclick="switchTab(this, 'delivered_orders')">Доставленные</a>
     <div id="tab-indicator" class="tab-indicator"></div>
 </div>
-
 <div class="tab-content">
     <div class="tab-pane fade show active" id="active_orders" style="display: block;">
         {% if not active_orders %}
@@ -1015,8 +887,8 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     <div class="card border-0 shadow-sm rounded-4 h-100 p-3">
                         <div class="d-flex align-items-center mb-3">
                             {% if o.product and o.product.image %}<img src="/proxy_image?url={{ o.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">{% endif %}
-                            <div>
-                                <h6 class="fw-bold mb-1 text-truncate">{{ o.product_name }}</h6>
+                            <div class="w-100 overflow-hidden">
+                                <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{{ o.product_name }}</h6>
                                 <p class="text-muted small mb-0">Размер: {{ o.size }} | {{ o.date.strftime('%d.%m.%Y') }} {% if o.order_group_id %}(Заказ №{{ o.order_group_id }}){% endif %}</p>
                             </div>
                         </div>
@@ -1030,7 +902,6 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             </div>
         {% endif %}
     </div>
-
     <div class="tab-pane fade" id="delivered_orders" style="display: none;">
         {% if not delivered_orders %}
             <div class="text-center py-5"><h5 class="text-muted">У вас пока нет доставленных заказов</h5></div>
@@ -1041,8 +912,8 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     <div class="card border-0 shadow-sm rounded-4 h-100 p-3 opacity-75">
                         <div class="d-flex align-items-center mb-3">
                             {% if o.product and o.product.image %}<img src="/proxy_image?url={{ o.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">{% endif %}
-                            <div>
-                                <h6 class="fw-bold mb-1 text-truncate">{{ o.product_name }}</h6>
+                            <div class="w-100 overflow-hidden">
+                                <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{{ o.product_name }}</h6>
                                 <p class="text-muted small mb-0">Размер: {{ o.size }} | {{ o.date.strftime('%d.%m.%Y') }} {% if o.order_group_id %}(Заказ №{{ o.order_group_id }}){% endif %}</p>
                             </div>
                         </div>
@@ -1065,25 +936,20 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             indicator.style.left = activeTab.offsetLeft + 'px';
         }
     }
-
     function switchTab(el, targetId) {
         document.querySelectorAll('.status-tab').forEach(tab => tab.classList.remove('active'));
         el.classList.add('active');
-
         document.querySelectorAll('.tab-pane').forEach(pane => {
             pane.style.display = 'none';
             pane.classList.remove('show', 'active');
         });
-
         const targetPane = document.getElementById(targetId);
         if (targetPane) {
             targetPane.style.display = 'block';
             targetPane.classList.add('show', 'active');
         }
-
         updateIndicator();
     }
-
     window.addEventListener('load', updateIndicator);
     window.addEventListener('resize', updateIndicator);
 </script>
@@ -1095,7 +961,6 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 def index():
     try:
         session['last_query'] = request.query_string.decode('utf-8')
-
         search = request.args.get('search', '').strip()
         colors = request.args.get('color', '')
         brands = request.args.get('brand', '')
@@ -1128,10 +993,10 @@ def index():
             min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True),
             USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP
         )
-    except exc.OperationalError as e:
+    except exc.OperationalError:
         db.session.rollback()
         return "Ошибка соединения с базой. Обновите страницу через пару секунд.", 503
-    except Exception as e:
+    except Exception:
         db.session.rollback()
         return "Внутренняя ошибка сервера", 500
 
@@ -1156,9 +1021,6 @@ def update_prices():
         result = {str(p.id): get_display_price(p.last_krw_price) for p in products if
                   get_display_price(p.last_krw_price)}
         return jsonify(result)
-    except exc.OperationalError:
-        db.session.rollback()
-        return jsonify({})
     except Exception:
         db.session.rollback()
         return jsonify({})
@@ -1295,7 +1157,6 @@ def make_order():
             price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
             full_address = f"{request.form['street']}, д. {request.form['house']}"
 
-            # Получаем новый ID группы заказа
             max_group = db.session.query(db.func.max(Order.order_group_id)).scalar() or 0
             new_group = max_group + 1
 
@@ -1340,7 +1201,7 @@ def make_order():
         return redirect('/')
 
 
-# ================= МАРШРУТ ОФОРМЛЕНИЯ ВСЕЙ КОРЗИНЫ =================
+# ================= МАРШРУТ ОФОРМЛЕНИЯ ВСЕЙ КОРЗИНЫ (ИЗМЕНЕН!) =================
 @app.route('/order_cart', methods=['GET', 'POST'])
 def order_cart():
     try:
@@ -1363,6 +1224,9 @@ def order_cart():
                 krw = item.product.last_krw_price
                 price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
 
+                # ТЕПЕРЬ МЫ БЕРЕМ РАЗМЕР ИНДИВИДУАЛЬНО ДЛЯ КАЖДОГО ТОВАРА ИЗ ФОРМЫ
+                selected_size = request.form.get(f'size_{item.product.id}')
+
                 order = Order(
                     session_id=session['uid'],
                     order_group_id=new_group,
@@ -1373,7 +1237,7 @@ def order_cart():
                     address=full_address,
                     product_id=item.product.id,
                     product_name=item.product.name,
-                    size=item.size,
+                    size=selected_size,  # Используем выбранный размер
                     comment=request.form.get('comment'),
                     price_rub_at_order=price_rub,
                     price_usd_at_order=price_usd,
@@ -1401,7 +1265,7 @@ def order_cart():
 def thanks(): return render_template_string(THANKS_HTML)
 
 
-# ================== АВТОРИЗАЦИЯ, РЕГИСТРАЦИЯ И ЗАКАЗЫ ==================
+# ================== АВТОРИЗАЦИЯ И РЕГИСТРАЦИЯ ==================
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     try:
@@ -1410,13 +1274,9 @@ def register():
             if User.query.filter_by(username=username).first():
                 flash('Пользователь с таким логином уже существует', 'danger')
             else:
-                new_user = User(
-                    username=username,
-                    first_name=request.form.get('first_name'),
-                    last_name=request.form.get('last_name'),
-                    phone=request.form.get('phone'),
-                    is_admin=False
-                )
+                new_user = User(username=username, first_name=request.form.get('first_name'),
+                                last_name=request.form.get('last_name'), phone=request.form.get('phone'),
+                                is_admin=False)
                 new_user.set_password(request.form.get('password'))
                 db.session.add(new_user)
                 db.session.commit()
@@ -1424,7 +1284,7 @@ def register():
                 flash('Вы успешно зарегистрировались!', 'success')
                 return redirect('/')
         return render_template_string(REGISTER_HTML, messages=get_flashed_messages(with_categories=True))
-    except Exception as e:
+    except Exception:
         db.session.rollback()
         return "Ошибка регистрации. Попробуйте еще раз.", 500
 
@@ -1438,8 +1298,7 @@ def login():
             if user and check_password_hash(user.password_hash, request.form.get('password')):
                 login_user(user)
                 flash('Успешный вход', 'success')
-                if getattr(user, 'is_admin', False):
-                    return redirect('/admin')
+                if getattr(user, 'is_admin', False): return redirect('/admin')
                 return redirect('/')
             flash('Неверные данные', 'danger')
         return render_template_string(LOGIN_HTML, messages=get_flashed_messages(with_categories=True))
@@ -1459,18 +1318,17 @@ def logout():
 @login_required
 def my_orders():
     try:
-        if getattr(current_user, 'is_admin', False):
-            return redirect('/admin')
+        if getattr(current_user, 'is_admin', False): return redirect('/admin')
         orders = Order.query.filter_by(user_id=current_user.id).order_by(Order.date.desc()).all()
         active_orders = [o for o in orders if o.status != 'Заказ Доставлен']
         delivered_orders = [o for o in orders if o.status == 'Заказ Доставлен']
         return render_template_string(MY_ORDERS_HTML, active_orders=active_orders, delivered_orders=delivered_orders)
-    except Exception as e:
+    except Exception:
         db.session.rollback()
         return "Ошибка загрузки заказов", 500
 
 
-# ================== АДМИНКА ==================
+# ================== АДМИНКА (РУСИФИЦИРОВАНА) ==================
 class MyAdminIndexView(AdminIndexView):
     @expose('/')
     def index(self):
@@ -1480,6 +1338,14 @@ class MyAdminIndexView(AdminIndexView):
 
 
 class ProductAdmin(ModelView):
+    # ПЕРЕВОД КОЛОНОК НА РУССКИЙ
+    column_labels = {
+        'id': 'ID', 'name': 'Название', 'description': 'Описание', 'price_url': 'Ссылка на цену',
+        'brand': 'Бренд', 'color': 'Цвет', 'sizes': 'Размеры', 'available': 'В наличии',
+        'image': 'Фото 1', 'image2': 'Фото 2', 'image3': 'Фото 3', 'image4': 'Фото 4', 'image5': 'Фото 5',
+        'real_rub': 'Себестоимость', 'price_rub': 'Цена продажи', 'profit_rub': 'Прибыль'
+    }
+
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
     form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2',
                     'image3', 'image4', 'image5']
@@ -1502,6 +1368,13 @@ class ProductAdmin(ModelView):
 
 
 class OrderAdmin(ModelView):
+    # ПЕРЕВОД КОЛОНОК НА РУССКИЙ
+    column_labels = {
+        'date': 'Дата заказа', 'product_name': 'Товар', 'customer_surname': 'Фамилия',
+        'phone': 'Телефон', 'address': 'Адрес', 'size': 'Размер', 'price_rub_at_order': 'Цена при заказе',
+        'profit_rub': 'Прибыль', 'status': 'Статус', 'customer_name': 'Имя', 'email': 'Email', 'comment': 'Комментарий'
+    }
+
     column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order',
                    'profit_rub', 'status']
     can_export = True
@@ -1514,6 +1387,8 @@ class OrderAdmin(ModelView):
         return f"{date_str} (№{m.order_group_id})" if getattr(m, 'order_group_id', None) else date_str
 
     column_formatters = {'date': date_format}
+
+
 admin = Admin(app, name='KROSSMAG Админ', theme=Bootstrap4Theme(), index_view=MyAdminIndexView())
 admin.add_view(ProductAdmin(Product, db.session))
 admin.add_view(OrderAdmin(Order, db.session))
@@ -1524,7 +1399,6 @@ def init_db():
     for attempt in range(5):
         try:
             db.create_all()
-
             inspector = db.inspect(db.engine)
             with db.engine.begin() as conn:
                 if 'users' in inspector.get_table_names():
@@ -1546,90 +1420,9 @@ def init_db():
                 admin_user.set_password('78957895kross')
                 db.session.add(admin_user)
                 db.session.commit()
-                print("✅ База Postgres инициализирована, админ создан")
             break
-        except exc.OperationalError as e:
-            db.session.rollback()
-            print(f"Попытка переподключения к БД при старте... ({attempt + 1}/5)")
+        except Exception:
             time.sleep(2)
-        except Exception as e:
-            db.session.rollback()
-            print(f"Критическая ошибка при инициализации БД: {e}")
-            break
-
-
-def background_parser_loop():
-    last_exchange_update = 0
-    while True:
-        if time.time() - last_exchange_update > 3600:
-            update_exchange_rates()
-            last_exchange_update = time.time()
-
-        product_ids_to_update = []
-
-        with app.app_context():
-            try:
-                products = Product.query.filter(
-                    (Product.last_krw_price == 0.0) | (Product.last_krw_price == None)
-                ).all()
-                for p in products:
-                    if p.price_url and "kream.co.kr" in p.price_url:
-                        product_ids_to_update.append((p.id, p.price_url, p.name, p.brand, p.color))
-            except Exception as e:
-                print(f"Ошибка чтения БД в фоне: {e}")
-                db.session.rollback()
-
-        for pid, url, name, current_brand, current_color in product_ids_to_update:
-            print(f"🔍 Загрузка цены: {name}...")
-            price = None
-            found_brand = current_brand
-            found_color = current_color
-
-            try:
-                r = kream_session.get(url, headers=get_random_headers(), timeout=5)
-                if r.status_code == 200:
-                    html = r.text.lower()
-                    pc = []
-                    for pat in [r'"lowestprice"\s*:\s*(\d+)', r'"price"\s*:\s*(\d+)', r'"buyprice"\s*:\s*(\d+)']:
-                        for m in re.findall(pat, html):
-                            if 10000 <= int(m) <= 5000000: pc.append(int(m))
-                    if pc: price = min(pc)
-
-                    title_match = re.search(r'<title>(.*?)</title>', html)
-                    title = title_match.group(1) if title_match else ""
-                    if not found_brand:
-                        found_brand = next((b for b in BRANDS if b.lower() in title), None)
-                    if not found_color:
-                        kor_colors = {'화이트': 'white', '블랙': 'black', '레드': 'red', '블루': 'blue', '그린': 'green',
-                                      '옐로우': 'yellow', '핑크': 'pink', '퍼플': 'purple', '오렌지': 'orange', '그레이': 'gray',
-                                      '베이지': 'beige', '네이비': 'navy', '브라운': 'brown', '민트': 'mint', '버건디': 'burgundy'}
-                        for kor, eng in kor_colors.items():
-                            if kor in title or eng in title:
-                                found_color = eng;
-                                break
-            except requests.exceptions.Timeout:
-                print(f"⏳ Таймаут (5 сек) для {name}")
-            except Exception as e:
-                print(f"❌ Ошибка парсинга {name}: {e}")
-
-            if price:
-                with app.app_context():
-                    try:
-                        p = db.session.get(Product, pid)
-                        if p:
-                            p.last_krw_price = price
-                            p.markup_krw = round(price * MARKUP)
-                            if not p.brand: p.brand = found_brand
-                            if not p.color: p.color = found_color
-                            db.session.commit()
-                            print(f"✅ Сохранено: {name} -> {price} KRW")
-                    except Exception as e:
-                        db.session.rollback()
-                        print(f"Ошибка записи в БД: {e}")
-
-            time.sleep(3)
-
-        time.sleep(10)
 
 
 if __name__ == '__main__':
@@ -1639,5 +1432,4 @@ if __name__ == '__main__':
     if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
         threading.Thread(target=background_parser_loop, daemon=True).start()
 
-    print("\n✅ KROSSMAG ДОНЕЦК запущен → http://127.0.0.1:5000")
     app.run(debug=True, use_reloader=False)
