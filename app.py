@@ -255,7 +255,6 @@ def load_user(user_id):
 
 
 # ================== ФОНОВЫЙ ПАРСЕР ==================
-# ... (Код background_parser_loop остается тем же, не изменяется логика парсера) ...
 def background_parser_loop():
     last_exchange_update = 0
     while True:
@@ -341,12 +340,17 @@ BASE_HTML = r"""
     <link rel="apple-touch-icon" href="/image/krossmag.png">
 
     <style>
-        body { padding-top: 80px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        /* ИЗМЕНЕН padding-top для ПК */
+        body { padding-top: 90px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
         .product-card { transition: all 0.3s; cursor: pointer; border: none; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
         .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
         .navbar-brand { font-weight: 900; font-size: 1.9rem; letter-spacing: -1px; }
-        .main-logo { height: 40px; }
+
+        /* УВЕЛИЧЕН РАЗМЕР ЛОГО НА ДЕСКТОПЕ */
+        .main-logo { height: 55px; } 
+
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
         .card-img-wrapper { position: relative; background: #fff; padding: 10px; border-radius: 12px 12px 0 0;}
         .card-img-top { height: 260px; object-fit: contain; }
@@ -385,11 +389,14 @@ BASE_HTML = r"""
         .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 6px; background: #f8f9fa; font-weight: 600;}
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
 
-        /* МОБИЛЬНАЯ ОПТИМИЗАЦИЯ */
+        /* ИСПРАВЛЕННАЯ МОБИЛЬНАЯ ОПТИМИЗАЦИЯ */
         @media (max-width: 991px) {
+            /* ОТОДВИНУЛИ САЙТ ВНИЗ ЧТОБЫ ШАПКА ЕГО НЕ ЗАКРЫВАЛА */
+            body { padding-top: 150px; } 
             .navbar .container { flex-direction: column; text-align: center; padding: 10px; }
             .navbar-brand { margin: 0 auto 10px auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.5rem; }
-            .main-logo { height: 30px; }
+            /* УВЕЛИЧЕНО ЛОГО НА ТЕЛЕФОНЕ И ВЫРОВНЕНО */
+            .main-logo { height: 65px; margin-right: 10px !important; margin-bottom: 5px; } 
             .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; }
             .text-truncate-mobile-wrap { white-space: normal !important; overflow: visible; text-overflow: clip; }
         }
@@ -408,7 +415,7 @@ BASE_HTML = r"""
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center" href="/">
-                <img src="/image/krossmag.png" alt="Logo" class="main-logo me-2">KROSSMAG
+                <img src="https://i.postimg.cc/wy0jWDdm/logo.png" alt="Logo" class="main-logo">KROSSMAG
             </a>
             <div class="ms-auto d-flex align-items-center gap-3">
                 <a href="/favorites" class="text-white text-decoration-none icon-btn" title="Избранное">
