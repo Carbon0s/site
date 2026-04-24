@@ -9,3 +9,4 @@ Werkzeug==3.0.2
 Jinja2==3.1.4
 MarkupSafe==2.1.5
 sqlalchemy==2.0.25
+Flask-Babel==3.1.0
