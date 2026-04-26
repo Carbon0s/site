@@ -345,7 +345,7 @@ BASE_HTML = r"""
         .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
         .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
         .navbar-brand { font-weight: 900; font-size: 1.9rem; letter-spacing: -1px; }
-        .main-logo { height: 55px; } 
+        .main-logo { height: 50px; } 
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
         .card-img-wrapper { position: relative; background: #fff; padding: 10px; border-radius: 12px 12px 0 0;}
         .card-img-top { height: 260px; object-fit: contain; }
@@ -385,11 +385,11 @@ BASE_HTML = r"""
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
 
         @media (max-width: 991px) {
-            body { padding-top: 150px; } 
-            .navbar .container { flex-direction: column; text-align: center; padding: 10px; }
-            .navbar-brand { margin: 0 auto 10px auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.5rem; }
-            .main-logo { height: 65px; margin-right: 10px !important; margin-bottom: 5px; } 
-            .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; }
+            body { padding-top: 105px; } /* Уменьшили отступ для компактной шапки */
+            .navbar .container { flex-direction: column; text-align: center; padding: 5px 10px; }
+            .navbar-brand { margin: 0 auto 5px auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.4rem; }
+            .main-logo { height: 45px; margin-right: 8px !important; margin-bottom: 0; } 
+            .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 10px !important; }
             .text-truncate-mobile-wrap { white-space: normal !important; overflow: visible; text-overflow: clip; }
         }
     </style>
@@ -413,20 +413,24 @@ BASE_HTML = r"""
                 <a href="/favorites" class="text-white text-decoration-none icon-btn" title="Избранное">
                     <img src="https://images.icon-icons.com/903/PNG/512/bookmark_icon-icons.com_69556.png">
                 </a>
-                <a href="/cart" class="text-white text-decoration-none icon-btn me-3" title="Корзина">
+                <a href="/cart" class="text-white text-decoration-none icon-btn" title="Корзина">
                     <img src="https://cdn-icons-png.flaticon.com/512/7244/7244725.png">
                 </a>
 
                 {% if current_user.is_authenticated and getattr(current_user, 'is_admin', False) == False %}
-                    <a href="/my_orders" class="btn btn-sm btn-outline-light fw-bold">📦 Заказы</a>
-                    <a href="/logout" class="btn btn-sm btn-danger ms-2 fw-bold">Выход</a>
+                    <a href="/my_orders" class="btn btn-sm btn-outline-light fw-bold ms-1">📦 Заказы</a>
+                    <a href="/logout" class="btn btn-sm btn-danger fw-bold">Выход</a>
                 {% elif current_user.is_authenticated and getattr(current_user, 'is_admin', False) == True %}
-                    <a href="/admin" class="btn btn-sm btn-outline-light fw-bold">Админка</a>
-                    <a href="/logout" class="btn btn-sm btn-danger ms-2 fw-bold">Выход</a>
+                    <a href="/admin" class="btn btn-sm btn-outline-light fw-bold ms-1">Админка</a>
+                    <a href="/logout" class="btn btn-sm btn-danger fw-bold">Выход</a>
                 {% else %}
-                    <a href="/login" class="btn btn-sm btn-outline-light fw-bold">Вход</a>
-                    <a href="/register" class="btn btn-sm btn-light fw-bold text-dark ms-2">Регистрация</a>
+                    <a href="/login" class="btn btn-sm btn-outline-light fw-bold ms-1">Вход</a>
+                    <a href="/register" class="btn btn-sm btn-light fw-bold text-dark">Регистрация</a>
                 {% endif %}
+                
+                <a href="https://t.me/KROSSMAG_ry" target="_blank" class="d-flex align-items-center ms-1" title="Наш Telegram-канал">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Telegram_logo_icon.svg/1280px-Telegram_logo_icon.svg.png" style="width: 28px; height: 28px; border-radius: 50%; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">
+                </a>
             </div>
         </div>
     </nav>
@@ -449,6 +453,23 @@ BASE_HTML = r"""
             t.innerHTML = `<div class="d-flex"><div class="toast-body fw-bold">${msg}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
             document.getElementById('toast-container').appendChild(t);
             setTimeout(() => t.remove(), 3000);
+        }
+
+        // СКРИПТЫ ДЛЯ КНОПКИ ПОДЕЛИТЬСЯ
+        function shareNative(e, title) {
+            e.preventDefault();
+            if (navigator.share) {
+                navigator.share({
+                    title: title,
+                    url: window.location.href
+                }).catch(console.error);
+            } else {
+                copyLink(e, window.location.href);
+            }
+        }
+        function copyLink(e, url) {
+            e.preventDefault();
+            navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована!'));
         }
 
         function updatePrices() {
@@ -660,11 +681,13 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <div class="dropdown flex-fill d-flex" style="min-width: 30%;">
                     <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border" type="button" data-bs-toggle="dropdown" aria-expanded="false">🔗 Поделиться</button>
                     <ul class="dropdown-menu w-100 shadow border-0 rounded-3">
-                        <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ product.name|replace("'", "\\'") }}')">📲 Поделиться (Меню телефона)</a></li>
-                        <li><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.id }}&text=Смотри, что я нашел в KROSSMAG: {{ product.name }}">✈️ Telegram</a></li>
-                        <li><a class="dropdown-item py-2" target="_blank" href="https://api.whatsapp.com/send?text=Смотри, что я нашел в KROSSMAG: {{ product.name }} - {{ request.host_url }}product/{{ product.id }}">🟢 WhatsApp</a></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.id }}')">🔗 Скопировать ссылку</a></li>
+                        <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ product.name|replace("'", "\\'") }}')">📲 Поделиться</a></li>
+                        <li class="d-block d-md-none"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.id }}')">🔗 Скопировать ссылку</a></li>
+                        
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.id }}&text=Смотри, что я нашел в KROSSMAG: {{ product.name }}">✈️ Telegram</a></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://api.whatsapp.com/send?text=Смотри, что я нашел в KROSSMAG: {{ product.name }} - {{ request.host_url }}product/{{ product.id }}">🟢 WhatsApp</a></li>
+                        <li class="d-none d-md-block"><hr class="dropdown-divider"></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.id }}')">🔗 Скопировать ссылку</a></li>
                     </ul>
                 </div>
             </div>
@@ -676,6 +699,48 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
     </div>
 </div>
+
+{% if related %}
+<div class="mt-5 pt-3 border-top">
+    <h3 class="fw-bold mb-4 text-center">Возможно вам также понравится:</h3>
+    <div class="row">
+        {% for p in related %}
+        <div class="col-md-4 col-lg-3 mb-4">
+            <div class="card product-card h-100 {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
+                <div id="rel_carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
+                    <div class="carousel-inner">
+                        <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy">{% endif %}</div>
+                    </div>
+                    <a href="/api/fav/add/{{ p.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="В избранное">❤️</a>
+                    {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
+                </div>
+                <div class="card-body d-flex flex-column bg-white">
+                    <h5 class="card-title text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                    <div class="d-flex align-items-center mb-2">
+                        <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
+                        <span class="text-muted small me-2">{{ p.brand }}</span>
+                        <div class="card-color-circle" style="background-color: {{ p.color }};" title="{{ COLORS.get(p.color, '') }}"></div>
+                    </div>
+                    {% if p.available %}
+                        <p id="price-{{ p.id }}" class="price-main mb-3">
+                            {% if p.last_krw_price and p.last_krw_price > 10000 %}
+                                {{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
+                            {% else %}
+                                <span class="text-warning fs-6">Загрузка...</span>
+                            {% endif %}
+                        </p>
+                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
+                    {% else %}
+                        <p class="text-muted fw-bold mb-3">Нет в наличии</p>
+                        <button class="btn btn-secondary w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
 """)
 
 FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
@@ -1001,7 +1066,30 @@ def index():
 def product_detail(product_id):
     try:
         product = Product.query.get_or_404(product_id)
-        related = Product.query.filter(Product.brand == product.brand, Product.id != product.id).limit(4).all()
+        
+        # Логика для блока "Возможно вам также понравится"
+        base_price = get_display_price(product.last_krw_price)
+        base_rub = base_price['rub'] if base_price else 0
+
+        # Берем все товары того же бренда, исключая текущий
+        all_brand_products = Product.query.filter(Product.brand == product.brand, Product.id != product.id).all()
+        related_candidates = []
+
+        for p in all_brand_products:
+            if not p.available: continue
+            p_price = get_display_price(p.last_krw_price)
+            
+            if p_price and base_rub:
+                # Проверяем разброс +- 2000 рублей
+                if abs(p_price['rub'] - base_rub) <= 2000:
+                    related_candidates.append(p)
+            elif not base_rub:
+                # Если у товара нет цены, просто добавляем в список
+                related_candidates.append(p)
+
+        random.shuffle(related_candidates)
+        related = related_candidates[:10]  # Берем 10 случайных
+
         return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS,
                                       BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
                                       MARKUP=MARKUP)
@@ -1197,7 +1285,7 @@ def make_order():
         return redirect('/')
 
 
-# ================= МАРШРУТ ОФОРМЛЕНИЯ ВСЕЙ КОРЗИНЫ (ИЗМЕНЕН!) =================
+# ================= МАРШРУТ ОФОРМЛЕНИЯ ВСЕЙ КОРЗИНЫ =================
 @app.route('/order_cart', methods=['GET', 'POST'])
 def order_cart():
     try:
@@ -1220,7 +1308,6 @@ def order_cart():
                 krw = item.product.last_krw_price
                 price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
 
-                # ТЕПЕРЬ МЫ БЕРЕМ РАЗМЕР ИНДИВИДУАЛЬНО ДЛЯ КАЖДОГО ТОВАРА ИЗ ФОРМЫ
                 selected_size = request.form.get(f'size_{item.product.id}')
 
                 order = Order(
@@ -1233,7 +1320,7 @@ def order_cart():
                     address=full_address,
                     product_id=item.product.id,
                     product_name=item.product.name,
-                    size=selected_size,  # Используем выбранный размер
+                    size=selected_size,
                     comment=request.form.get('comment'),
                     price_rub_at_order=price_rub,
                     price_usd_at_order=price_usd,
@@ -1324,7 +1411,7 @@ def my_orders():
         return "Ошибка загрузки заказов", 500
 
 
-# ================== АДМИНКА (РУСИФИЦИРОВАНА) ==================
+# ================== АДМИНКА ==================
 class MyAdminIndexView(AdminIndexView):
     @expose('/')
     def index(self):
@@ -1334,7 +1421,6 @@ class MyAdminIndexView(AdminIndexView):
 
 
 class ProductAdmin(ModelView):
-    # ПЕРЕВОД КОЛОНОК НА РУССКИЙ
     column_labels = {
         'id': 'ID', 'name': 'Название', 'description': 'Описание', 'price_url': 'Ссылка на цену',
         'brand': 'Бренд', 'color': 'Цвет', 'sizes': 'Размеры', 'available': 'В наличии',
@@ -1364,7 +1450,6 @@ class ProductAdmin(ModelView):
 
 
 class OrderAdmin(ModelView):
-    # ПЕРЕВОД КОЛОНОК НА РУССКИЙ
     column_labels = {
         'date': 'Дата заказа', 'product_name': 'Товар', 'customer_surname': 'Фамилия',
         'phone': 'Телефон', 'address': 'Адрес', 'size': 'Размер', 'price_rub_at_order': 'Цена при заказе',
@@ -1420,13 +1505,10 @@ def init_db():
         except Exception:
             time.sleep(2)
 
-# =========================================================================
-# ИЗМЕНЕНИЯ ЗДЕСЬ: Выполнили инициализацию до запуска WSGI/Gunicorn
-# =========================================================================
+
 with app.app_context():
     init_db()
 
-# Запускаем фоновый парсер. Теперь он стартует всегда (и при локальном запуске, и на Render)
 threading.Thread(target=background_parser_loop, daemon=True).start()
 
 if __name__ == '__main__':
