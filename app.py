@@ -5,12 +5,12 @@ import time
 import re
 import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, \
     url_for, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from flask_admin import Admin, AdminIndexView, expose
+from flask_admin import Admin, AdminIndexView, expose, BaseView
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -75,11 +75,32 @@ def yandex_verification():
 </html>'''
 
 
+# ================== ОТСЛЕЖИВАНИЕ ПОСЕЩЕНИЙ И СЕССИЙ ==================
 @app.before_request
 def assign_anonymous_session():
     session.permanent = True
     if 'uid' not in session:
         session['uid'] = str(uuid.uuid4())
+        
+    # Исключаем из статистики запросы к картинкам и админке, чтобы не было мусора
+    if request.endpoint in ['custom_static', 'favicon', 'proxy_image', 'update_prices'] or request.path.startswith('/admin'):
+        return
+
+    # Логика счетчика (уникальные раз в 30 минут)
+    now = time.time()
+    last_visit = session.get('last_tracked_visit', 0)
+    is_unique = False
+    
+    if now - last_visit > 1800:  # 1800 секунд = 30 минут
+        is_unique = True
+        session['last_tracked_visit'] = now
+        
+    try:
+        new_visit = Visit(session_id=session['uid'], is_unique=is_unique)
+        db.session.add(new_visit)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 @app.teardown_appcontext
@@ -108,12 +129,16 @@ COLORS = {
     'orange': 'Оранжевый', 'gray': 'Серый', 'beige': 'Бежевый', 'navy': 'Тёмно-синий',
     'brown': 'Коричневый', 'mint': 'Мятный', 'burgundy': 'Бордовый'
 }
-BRANDS = ['New Balance', 'Asics', 'Nike', 'Adidas']
+
+# ДОБАВЛЕНЫ НОВЫЕ БРЕНДЫ И ЛОГОТИПЫ
+BRANDS = ['New Balance', 'Asics', 'Nike', 'Adidas', 'Hoka', 'Lacoste']
 BRAND_LOGOS = {
     'New Balance': 'https://ir.ozone.ru/s3/multimedia-1-r/w1200/7470042759.jpg',
     'Asics': 'https://i.pinimg.com/originals/64/da/e7/64dae773aafb206b444669d82b981add.png',
     'Nike': 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Logo_NIKE.svg/1920px-Logo_NIKE.svg.png',
-    'Adidas': 'https://i.pinimg.com/originals/ff/bb/48/ffbb4848314b68c7da1b634744356fda.png?nii=t'
+    'Adidas': 'https://i.pinimg.com/originals/ff/bb/48/ffbb4848314b68c7da1b634744356fda.png?nii=t',
+    'Hoka': 'https://shopozz.ru/images/brands_names/hoka.png',
+    'Lacoste': 'https://i.pinimg.com/originals/88/f3/42/88f3428f492bb1363746f60396570683.png'
 }
 
 
@@ -243,6 +268,15 @@ class Order(db.Model):
     date = db.Column(db.DateTime, default=datetime.utcnow)
     product = db.relationship('Product')
     user = db.relationship('User', backref='orders')
+
+
+# НОВАЯ ТАБЛИЦА ДЛЯ СТАТИСТИКИ ПОСЕЩЕНИЙ
+class Visit(db.Model):
+    __tablename__ = 'visits'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.String(100), index=True)
+    is_unique = db.Column(db.Boolean, default=False)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 
 @login_manager.user_loader
@@ -384,8 +418,9 @@ BASE_HTML = r"""
         .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 6px; background: #f8f9fa; font-weight: 600;}
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
 
+        /* ИСПРАВЛЕННАЯ ШАПКА ДЛЯ ТЕЛЕФОНОВ: Более компактная */
         @media (max-width: 991px) {
-            body { padding-top: 105px; } /* Уменьшили отступ для компактной шапки */
+            body { padding-top: 105px; } 
             .navbar .container { flex-direction: column; text-align: center; padding: 5px 10px; }
             .navbar-brand { margin: 0 auto 5px auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.4rem; }
             .main-logo { height: 45px; margin-right: 8px !important; margin-bottom: 0; } 
@@ -701,8 +736,8 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 
 {% if related %}
-<div class="mt-5 pt-3 border-top">
-    <h3 class="fw-bold mb-4 text-center">Возможно вам также понравится:</h3>
+<div class="mt-5 pt-4 border-top">
+    <h3 class="fw-bold mb-4">Вам также может понравиться:</h3>
     <div class="row">
         {% for p in related %}
         <div class="col-md-4 col-lg-3 mb-4">
@@ -826,7 +861,6 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 """)
 
-# ИЗМЕНЕНИЯ В КОРЗИНЕ (ИНДИВИДУАЛЬНЫЕ РАЗМЕРЫ ДЛЯ КАЖДОГО КРОССОВКА)
 ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/cart" class="back-btn">← Назад в корзину</a>
 <div class="row justify-content-center">
@@ -928,7 +962,6 @@ LOGIN_HTML = BASE_HTML.replace("{{ content | safe }}",
 REGISTER_HTML = BASE_HTML.replace("{{ content | safe }}",
                                   r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-5"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Регистрация</h3><form method="post" action="/register"><div class="row g-2 mb-3"><div class="col-md-6"><input type="text" name="first_name" class="form-control form-control-lg" placeholder="Имя" required></div><div class="col-md-6"><input type="text" name="last_name" class="form-control form-control-lg" placeholder="Фамилия" required></div></div><input type="tel" name="phone" class="form-control form-control-lg mb-3" placeholder="Телефон (+7...)" required><input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Придумайте логин" required><input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Придумайте пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Создать аккаунт</button></form><p class="mt-4 text-center text-muted">Уже есть аккаунт? <a href="/login" class="fw-bold text-dark text-decoration-none">Войти</a></p></div></div></div>""")
 
-# ОБНОВЛЕНО ДЛЯ МОБИЛЬНЫХ ТЕЛЕФОНОВ (Убрал жесткое text-truncate)
 MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
 <h2 class="fw-bold mb-4">📦 Мои заказы</h2>
@@ -1285,7 +1318,6 @@ def make_order():
         return redirect('/')
 
 
-# ================= МАРШРУТ ОФОРМЛЕНИЯ ВСЕЙ КОРЗИНЫ =================
 @app.route('/order_cart', methods=['GET', 'POST'])
 def order_cart():
     try:
@@ -1411,7 +1443,7 @@ def my_orders():
         return "Ошибка загрузки заказов", 500
 
 
-# ================== АДМИНКА ==================
+# ================== АДМИНКА И СТАТИСТИКА ==================
 class MyAdminIndexView(AdminIndexView):
     @expose('/')
     def index(self):
@@ -1427,25 +1459,14 @@ class ProductAdmin(ModelView):
         'image': 'Фото 1', 'image2': 'Фото 2', 'image3': 'Фото 3', 'image4': 'Фото 4', 'image5': 'Фото 5',
         'real_rub': 'Себестоимость', 'price_rub': 'Цена продажи', 'profit_rub': 'Прибыль'
     }
-
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
-    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2',
-                    'image3', 'image4', 'image5']
+    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2', 'image3', 'image4', 'image5']
     form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
 
-    def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
-        m, 'last_krw_price', 0) > 10000 else '-'
-
-    def price_rub(v, c, m,
-                  n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(
-        m, 'last_krw_price', 0) > 10000 else '-'
-
-    def profit_rub(v, c, m,
-                   n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
-        m, 'last_krw_price', 0) > 10000 else '-'
-
+    def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
+    def price_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
+    def profit_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
     column_formatters = {'real_rub': real_rub, 'price_rub': price_rub, 'profit_rub': profit_rub}
-
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
 
 
@@ -1455,24 +1476,81 @@ class OrderAdmin(ModelView):
         'phone': 'Телефон', 'address': 'Адрес', 'size': 'Размер', 'price_rub_at_order': 'Цена при заказе',
         'profit_rub': 'Прибыль', 'status': 'Статус', 'customer_name': 'Имя', 'email': 'Email', 'comment': 'Комментарий'
     }
-
-    column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order',
-                   'profit_rub', 'status']
+    column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order', 'profit_rub', 'status']
     can_export = True
     form_choices = {'status': ORDER_STATUSES}
-
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
-
     def date_format(v, c, m, n):
         date_str = m.date.strftime('%Y-%m-%d %H:%M') if m.date else ""
         return f"{date_str} (№{m.order_group_id})" if getattr(m, 'order_group_id', None) else date_str
-
     column_formatters = {'date': date_format}
 
 
+class StatsAdmin(BaseView):
+    @expose('/')
+    def index(self):
+        now = datetime.utcnow()
+        periods = {
+            'За 1 час': now - timedelta(hours=1),
+            'За 24 часа': now - timedelta(days=1),
+            'За 7 дней': now - timedelta(days=7),
+            'За 30 дней': now - timedelta(days=30),
+            'За 365 дней': now - timedelta(days=365)
+        }
+        
+        stats_data = {}
+        for name, dt in periods.items():
+            total_visits = Visit.query.filter(Visit.timestamp >= dt).count()
+            unique_visits = Visit.query.filter(Visit.timestamp >= dt, Visit.is_unique == True).count()
+            orders = Order.query.filter(Order.date >= dt).count()
+            stats_data[name] = {
+                'total_visits': total_visits,
+                'unique_visits': unique_visits,
+                'orders': orders
+            }
+
+        html = """
+        {% extends 'admin/master.html' %}
+        {% block body %}
+            <div class="container mt-4">
+                <h2 class="mb-4 text-center fw-bold">📊 Статистика магазина</h2>
+                <div class="card shadow-sm border-0 rounded">
+                    <div class="card-body p-0">
+                        <table class="table table-hover table-striped mb-0 text-center align-middle">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th class="py-3">Период</th>
+                                    <th class="py-3">Уникальные посетители (раз в 30 мин)</th>
+                                    <th class="py-3">Все просмотры страниц</th>
+                                    <th class="py-3">Оформленные заказы</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for period, data in stats_data.items() %}
+                                <tr>
+                                    <td class="fw-bold py-3 text-start ps-4">{{ period }}</td>
+                                    <td class="fs-5 text-primary fw-bold">{{ data.unique_visits }}</td>
+                                    <td class="fs-5 text-secondary">{{ data.total_visits }}</td>
+                                    <td class="fs-5 text-success fw-bold">{{ data.orders }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        {% endblock %}
+        """
+        return render_template_string(html, stats_data=stats_data, admin_base_template=admin.base_template, admin_view=admin.index_view, h=admin_helpers, get_url=url_for)
+
+    def is_accessible(self):
+        return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
+
+
 admin = Admin(app, name='KROSSMAG Админ', theme=Bootstrap4Theme(), index_view=MyAdminIndexView())
-admin.add_view(ProductAdmin(Product, db.session))
-admin.add_view(OrderAdmin(Order, db.session))
+admin.add_view(ProductAdmin(Product, db.session, name="Товары"))
+admin.add_view(OrderAdmin(Order, db.session, name="Заказы"))
+admin.add_view(StatsAdmin(name='Статистика', endpoint='stats'))
 
 
 # ================== ИНИЦИАЛИЗАЦИЯ И ЗАПУСК ==================
@@ -1484,17 +1562,13 @@ def init_db():
             with db.engine.begin() as conn:
                 if 'users' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('users')]
-                    if 'first_name' not in cols: conn.execute(
-                        text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
-                    if 'last_name' not in cols: conn.execute(
-                        text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
+                    if 'first_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
+                    if 'last_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
                     if 'phone' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(30)"))
                 if 'orders' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('orders')]
-                    if 'user_id' not in cols: conn.execute(
-                        text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
-                    if 'order_group_id' not in cols: conn.execute(
-                        text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
+                    if 'user_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+                    if 'order_group_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
 
             if not User.query.filter_by(username='admin').first():
                 admin_user = User(username='admin', is_admin=True)
@@ -1507,6 +1581,7 @@ def init_db():
 
 
 with app.app_context():
+    from flask_admin import helpers as admin_helpers
     init_db()
 
 threading.Thread(target=background_parser_loop, daemon=True).start()
