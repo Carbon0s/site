@@ -5,12 +5,12 @@ import time
 import re
 import random
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, \
     url_for, session, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from flask_admin import Admin, AdminIndexView, expose, BaseView
+from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.theme import Bootstrap4Theme
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -21,7 +21,7 @@ from flask_babel import Babel  # ДОБАВЛЕНО ДЛЯ РУСИФИКАЦИ�
 
 app = Flask(__name__)
 
-# ИСПРАВЛЕНИЕ ДЛЯ RENDER: Flask должен знать, что он работает за прокси-сервером
+# ИСПРАВЛЕНИЕ ДЛЯ RENDER
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'krossmag_postgresql_final_2026_render')
@@ -68,39 +68,16 @@ def favicon():
 @app.route('/yandex_86464e3ed56c660d.html')
 def yandex_verification():
     return '''<html>
-    <head>
-        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    </head>
+    <head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head>
     <body>Verification: 86464e3ed56c660d</body>
 </html>'''
 
 
-# ================== ОТСЛЕЖИВАНИЕ ПОСЕЩЕНИЙ И СЕССИЙ ==================
 @app.before_request
 def assign_anonymous_session():
     session.permanent = True
     if 'uid' not in session:
         session['uid'] = str(uuid.uuid4())
-        
-    # Исключаем из статистики запросы к картинкам и админке, чтобы не было мусора
-    if request.endpoint in ['custom_static', 'favicon', 'proxy_image', 'update_prices'] or request.path.startswith('/admin'):
-        return
-
-    # Логика счетчика (уникальные раз в 30 минут)
-    now = time.time()
-    last_visit = session.get('last_tracked_visit', 0)
-    is_unique = False
-    
-    if now - last_visit > 1800:  # 1800 секунд = 30 минут
-        is_unique = True
-        session['last_tracked_visit'] = now
-        
-    try:
-        new_visit = Visit(session_id=session['uid'], is_unique=is_unique)
-        db.session.add(new_visit)
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
 
 
 @app.teardown_appcontext
@@ -129,8 +106,7 @@ COLORS = {
     'orange': 'Оранжевый', 'gray': 'Серый', 'beige': 'Бежевый', 'navy': 'Тёмно-синий',
     'brown': 'Коричневый', 'mint': 'Мятный', 'burgundy': 'Бордовый'
 }
-
-# ДОБАВЛЕНЫ НОВЫЕ БРЕНДЫ И ЛОГОТИПЫ
+# НОВЫЕ БРЕНДЫ
 BRANDS = ['New Balance', 'Asics', 'Nike', 'Adidas', 'Hoka', 'Lacoste']
 BRAND_LOGOS = {
     'New Balance': 'https://ir.ozone.ru/s3/multimedia-1-r/w1200/7470042759.jpg',
@@ -268,15 +244,6 @@ class Order(db.Model):
     date = db.Column(db.DateTime, default=datetime.utcnow)
     product = db.relationship('Product')
     user = db.relationship('User', backref='orders')
-
-
-# НОВАЯ ТАБЛИЦА ДЛЯ СТАТИСТИКИ ПОСЕЩЕНИЙ
-class Visit(db.Model):
-    __tablename__ = 'visits'
-    id = db.Column(db.Integer, primary_key=True)
-    session_id = db.Column(db.String(100), index=True)
-    is_unique = db.Column(db.Boolean, default=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 
 @login_manager.user_loader
@@ -417,26 +384,39 @@ BASE_HTML = r"""
         .icon-btn:hover img { transform: scale(1.1); }
         .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 6px; background: #f8f9fa; font-weight: 600;}
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
+        
+        /* Стили кнопок пагинации (по умолчанию) */
+        .mobile-pagination-btn { padding: 10px 20px; font-size: 1rem; border-radius: 8px; }
 
-        /* ИСПРАВЛЕННАЯ ШАПКА ДЛЯ ТЕЛЕФОНОВ: Более компактная */
+        /* ИСПРАВЛЕННАЯ ШАПКА ДЛЯ ТЕЛЕФОНОВ: Компактная + Сетка 2 в ряд */
         @media (max-width: 991px) {
-            body { padding-top: 105px; } 
-            .navbar .container { flex-direction: column; text-align: center; padding: 5px 10px; }
-            .navbar-brand { margin: 0 auto 5px auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.4rem; }
-            .main-logo { height: 45px; margin-right: 8px !important; margin-bottom: 0; } 
-            .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 10px !important; }
+            body { padding-top: 95px; } /* Уменьшенный отступ шапки */
+            .navbar .container { flex-direction: row; flex-wrap: wrap; justify-content: space-between; padding: 5px 10px; }
+            .navbar-brand { margin: 0 auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.3rem; margin-bottom: 5px; }
+            .main-logo { height: 40px; margin-right: 8px !important; margin-bottom: 0; } 
+            .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 6px !important; }
             .text-truncate-mobile-wrap { white-space: normal !important; overflow: visible; text-overflow: clip; }
+            
+            /* Карточка товара на мобильных (уменьшенные шрифты и отступы) */
+            .product-card .card-body { padding: 10px; }
+            .product-card h5 { font-size: 0.9rem; line-height: 1.2; margin-bottom: 5px; }
+            .price-main { font-size: 1.1rem; }
+            .price-main span { font-size: 0.8rem; }
+            .card-img-top { height: 160px; } /* Меньше картинка на телефоне */
+            .carousel-item img { height: 160px; }
+            .mini-btn { width: 30px; height: 30px; font-size: 0.9rem; }
+            .mini-btn.cart { top: 45px; }
+
+            /* Огромные кнопки пагинации на телефоне */
+            .mobile-pagination-btn {
+                padding: 15px 30px !important;
+                font-size: 1.2rem !important;
+                font-weight: bold;
+                border-radius: 12px;
+                width: auto;
+            }
         }
     </style>
-    <script type="text/javascript">
-       (function(m,e,t,r,i,k,a){
-           m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
-           m[i].l=1*new Date();
-           for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
-           k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
-       })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=108734484', 'ym');
-       ym(108734484, 'init', {ssr:true, webvisor:true, clickmap:true, trackLinks:true, accurateTrackBounce:true});
-    </script>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
@@ -598,8 +578,8 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 
 <div class="row" id="products-container">
-    {% for p in products %}
-    <div class="col-md-4 col-lg-3 mb-4">
+    {% for p in pagination.items %}
+    <div class="col-6 col-md-4 col-lg-3 mb-4">
         <div class="card product-card h-100 {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
             <div id="carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                 <div class="carousel-inner">
@@ -617,31 +597,48 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
             </div>
             <div class="card-body d-flex flex-column bg-white">
-                <h5 class="card-title text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
                 <div class="d-flex align-items-center mb-2">
                     <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                     <span class="text-muted small me-2">{{ p.brand }}</span>
                     <div class="card-color-circle" style="background-color: {{ p.color }};" title="{{ COLORS.get(p.color, '') }}"></div>
                 </div>
                 {% if p.available %}
-                    <p id="price-{{ p.id }}" class="price-main mb-3">
+                    <p id="price-{{ p.id }}" class="price-main mb-2">
                         {% if p.last_krw_price and p.last_krw_price > 10000 %}
                             {{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
-                            <span class="text-muted fs-6 fw-normal">- ${{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / USD_TO_RUB)|round(0)|int }}</span>
+                            <span class="text-muted fw-normal">- ${{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / USD_TO_RUB)|round(0)|int }}</span>
                         {% else %}
                             <span class="text-warning fs-6">Загрузка...</span>
                         {% endif %}
                     </p>
-                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
+                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
                 {% else %}
-                    <p class="text-muted fw-bold mb-3">Нет в наличии</p>
-                    <button class="btn btn-secondary w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
+                    <p class="text-muted fw-bold mb-2">Нет в наличии</p>
+                    <button class="btn btn-secondary btn-sm w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
                 {% endif %}
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
+
+<div class="d-flex flex-wrap justify-content-center align-items-center mt-4 mb-5 gap-3">
+    {% if pagination.has_prev %}
+        <a href="{{ url_for('index', page=pagination.prev_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow">
+            ⬅ Назад
+        </a>
+    {% endif %}
+    
+    <span class="fw-bold fs-5 text-muted px-3">Страница {{ pagination.page }} из {{ pagination.pages }}</span>
+
+    {% if pagination.has_next %}
+        <a href="{{ url_for('index', page=pagination.next_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow">
+            Дальше ➡
+        </a>
+    {% endif %}
+</div>
+
 <script>
     function toggleColor(color) {
         let input = document.getElementById('selectedColor');
@@ -740,7 +737,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
     <h3 class="fw-bold mb-4">Вам также может понравиться:</h3>
     <div class="row">
         {% for p in related %}
-        <div class="col-md-4 col-lg-3 mb-4">
+        <div class="col-6 col-md-4 col-lg-3 mb-4">
             <div class="card product-card h-100 {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
                 <div id="rel_carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                     <div class="carousel-inner">
@@ -750,24 +747,24 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
                 </div>
                 <div class="card-body d-flex flex-column bg-white">
-                    <h5 class="card-title text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
                     <div class="d-flex align-items-center mb-2">
                         <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                         <span class="text-muted small me-2">{{ p.brand }}</span>
                         <div class="card-color-circle" style="background-color: {{ p.color }};" title="{{ COLORS.get(p.color, '') }}"></div>
                     </div>
                     {% if p.available %}
-                        <p id="price-{{ p.id }}" class="price-main mb-3">
+                        <p id="price-{{ p.id }}" class="price-main mb-2">
                             {% if p.last_krw_price and p.last_krw_price > 10000 %}
                                 {{ ((p.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                             {% else %}
                                 <span class="text-warning fs-6">Загрузка...</span>
                             {% endif %}
                         </p>
-                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
+                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
                     {% else %}
-                        <p class="text-muted fw-bold mb-3">Нет в наличии</p>
-                        <button class="btn btn-secondary w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
+                        <p class="text-muted fw-bold mb-2">Нет в наличии</p>
+                        <button class="btn btn-secondary btn-sm w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
                     {% endif %}
                 </div>
             </div>
@@ -786,20 +783,20 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 <div class="row">
     {% for f in favorites %}
-    <div class="col-md-4 col-lg-3 mb-4">
+    <div class="col-6 col-md-4 col-lg-3 mb-4">
         <div class="card product-card h-100 {% if not f.product.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ f.product.id }}'">
             <div class="card-img-wrapper">
                 <img src="/proxy_image?url={{ f.product.image }}" class="card-img-top w-100">
                 <a href="/api/fav/remove/{{ f.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="Убрать">❌</a>
             </div>
             <div class="card-body bg-white d-flex flex-column">
-                <h5 class="text-truncate">{{ f.product.name }}</h5>
-                <p id="price-{{ f.product.id }}" class="text-muted fw-bold mb-2">
+                <h5 class="text-truncate-mobile-wrap text-truncate">{{ f.product.name }}</h5>
+                <p id="price-{{ f.product.id }}" class="price-main mb-2">
                     {% if f.product.last_krw_price and f.product.last_krw_price > 10000 %}
                         {{ ((f.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                     {% else %}Загрузка...{% endif %}
                 </p>
-                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark mt-auto" onclick="event.stopPropagation()">Заказать</a>{% endif %}
+                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark btn-sm mt-auto" onclick="event.stopPropagation()">Заказать</a>{% endif %}
             </div>
         </div>
     </div>
@@ -1060,6 +1057,7 @@ def index():
         brands = request.args.get('brand', '')
         min_p = request.args.get('min_p', type=int)
         max_p = request.args.get('max_p', type=int)
+        page = request.args.get('page', 1, type=int)
 
         query = Product.query
         if search: query = query.filter(Product.name.ilike(f'%{search}%'))
@@ -1070,18 +1068,22 @@ def index():
         brand_list = [b for b in brands.split(',') if b]
         if brand_list: query = query.filter(Product.brand.in_(brand_list))
 
-        products = []
-        for p in query.all():
-            prices = get_display_price(p.last_krw_price)
-            if prices:
-                rub = prices['rub']
-                if min_p and rub < min_p: continue
-                if max_p and rub > max_p: continue
-            products.append(p)
+        # Перевод рублей обратно в воны для фильтрации напрямую в базе данных (для пагинации)
+        if min_p or max_p:
+            krw_factor = USD_TO_KRW / (USD_TO_RUB * MARKUP)
+            if min_p:
+                min_krw = min_p * krw_factor
+                query = query.filter(Product.last_krw_price >= min_krw)
+            if max_p:
+                max_krw = max_p * krw_factor
+                query = query.filter(Product.last_krw_price <= max_krw)
+
+        # Вытягиваем из базы только 30 товаров (ускоряет работу сервера!)
+        pagination = query.order_by(Product.id.desc()).paginate(page=page, per_page=30, error_out=False)
 
         return render_template_string(
             HOME_HTML,
-            products=products, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS,
+            pagination=pagination, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS,
             search=search, selected_colors=color_list, selected_colors_str=colors,
             selected_brands=brand_list, selected_brands_str=brands,
             min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True),
@@ -1090,9 +1092,9 @@ def index():
     except exc.OperationalError:
         db.session.rollback()
         return "Ошибка соединения с базой. Обновите страницу через пару секунд.", 503
-    except Exception:
+    except Exception as e:
         db.session.rollback()
-        return "Внутренняя ошибка сервера", 500
+        return f"Внутренняя ошибка сервера: {e}", 500
 
 
 @app.route('/product/<int:product_id>')
@@ -1104,7 +1106,6 @@ def product_detail(product_id):
         base_price = get_display_price(product.last_krw_price)
         base_rub = base_price['rub'] if base_price else 0
 
-        # Берем все товары того же бренда, исключая текущий
         all_brand_products = Product.query.filter(Product.brand == product.brand, Product.id != product.id).all()
         related_candidates = []
 
@@ -1113,15 +1114,13 @@ def product_detail(product_id):
             p_price = get_display_price(p.last_krw_price)
             
             if p_price and base_rub:
-                # Проверяем разброс +- 2000 рублей
                 if abs(p_price['rub'] - base_rub) <= 2000:
                     related_candidates.append(p)
             elif not base_rub:
-                # Если у товара нет цены, просто добавляем в список
                 related_candidates.append(p)
 
         random.shuffle(related_candidates)
-        related = related_candidates[:10]  # Берем 10 случайных
+        related = related_candidates[:10]
 
         return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS,
                                       BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
@@ -1443,7 +1442,7 @@ def my_orders():
         return "Ошибка загрузки заказов", 500
 
 
-# ================== АДМИНКА И СТАТИСТИКА ==================
+# ================== АДМИНКА ==================
 class MyAdminIndexView(AdminIndexView):
     @expose('/')
     def index(self):
@@ -1459,14 +1458,25 @@ class ProductAdmin(ModelView):
         'image': 'Фото 1', 'image2': 'Фото 2', 'image3': 'Фото 3', 'image4': 'Фото 4', 'image5': 'Фото 5',
         'real_rub': 'Себестоимость', 'price_rub': 'Цена продажи', 'profit_rub': 'Прибыль'
     }
+
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
-    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2', 'image3', 'image4', 'image5']
+    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2',
+                    'image3', 'image4', 'image5']
     form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
 
-    def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
-    def price_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
-    def profit_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(m, 'last_krw_price', 0) > 10000 else '-'
+    def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
+        m, 'last_krw_price', 0) > 10000 else '-'
+
+    def price_rub(v, c, m,
+                  n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(
+        m, 'last_krw_price', 0) > 10000 else '-'
+
+    def profit_rub(v, c, m,
+                   n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
+        m, 'last_krw_price', 0) > 10000 else '-'
+
     column_formatters = {'real_rub': real_rub, 'price_rub': price_rub, 'profit_rub': profit_rub}
+
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
 
 
@@ -1476,81 +1486,24 @@ class OrderAdmin(ModelView):
         'phone': 'Телефон', 'address': 'Адрес', 'size': 'Размер', 'price_rub_at_order': 'Цена при заказе',
         'profit_rub': 'Прибыль', 'status': 'Статус', 'customer_name': 'Имя', 'email': 'Email', 'comment': 'Комментарий'
     }
-    column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order', 'profit_rub', 'status']
+
+    column_list = ['date', 'product_name', 'customer_surname', 'phone', 'address', 'size', 'price_rub_at_order',
+                   'profit_rub', 'status']
     can_export = True
     form_choices = {'status': ORDER_STATUSES}
+
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
+
     def date_format(v, c, m, n):
         date_str = m.date.strftime('%Y-%m-%d %H:%M') if m.date else ""
         return f"{date_str} (№{m.order_group_id})" if getattr(m, 'order_group_id', None) else date_str
+
     column_formatters = {'date': date_format}
 
 
-class StatsAdmin(BaseView):
-    @expose('/')
-    def index(self):
-        now = datetime.utcnow()
-        periods = {
-            'За 1 час': now - timedelta(hours=1),
-            'За 24 часа': now - timedelta(days=1),
-            'За 7 дней': now - timedelta(days=7),
-            'За 30 дней': now - timedelta(days=30),
-            'За 365 дней': now - timedelta(days=365)
-        }
-        
-        stats_data = {}
-        for name, dt in periods.items():
-            total_visits = Visit.query.filter(Visit.timestamp >= dt).count()
-            unique_visits = Visit.query.filter(Visit.timestamp >= dt, Visit.is_unique == True).count()
-            orders = Order.query.filter(Order.date >= dt).count()
-            stats_data[name] = {
-                'total_visits': total_visits,
-                'unique_visits': unique_visits,
-                'orders': orders
-            }
-
-        html = """
-        {% extends 'admin/master.html' %}
-        {% block body %}
-            <div class="container mt-4">
-                <h2 class="mb-4 text-center fw-bold">📊 Статистика магазина</h2>
-                <div class="card shadow-sm border-0 rounded">
-                    <div class="card-body p-0">
-                        <table class="table table-hover table-striped mb-0 text-center align-middle">
-                            <thead class="table-dark">
-                                <tr>
-                                    <th class="py-3">Период</th>
-                                    <th class="py-3">Уникальные посетители (раз в 30 мин)</th>
-                                    <th class="py-3">Все просмотры страниц</th>
-                                    <th class="py-3">Оформленные заказы</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for period, data in stats_data.items() %}
-                                <tr>
-                                    <td class="fw-bold py-3 text-start ps-4">{{ period }}</td>
-                                    <td class="fs-5 text-primary fw-bold">{{ data.unique_visits }}</td>
-                                    <td class="fs-5 text-secondary">{{ data.total_visits }}</td>
-                                    <td class="fs-5 text-success fw-bold">{{ data.orders }}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        {% endblock %}
-        """
-        return render_template_string(html, stats_data=stats_data, admin_base_template=admin.base_template, admin_view=admin.index_view, h=admin_helpers, get_url=url_for)
-
-    def is_accessible(self):
-        return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
-
-
 admin = Admin(app, name='KROSSMAG Админ', theme=Bootstrap4Theme(), index_view=MyAdminIndexView())
-admin.add_view(ProductAdmin(Product, db.session, name="Товары"))
-admin.add_view(OrderAdmin(Order, db.session, name="Заказы"))
-admin.add_view(StatsAdmin(name='Статистика', endpoint='stats'))
+admin.add_view(ProductAdmin(Product, db.session))
+admin.add_view(OrderAdmin(Order, db.session))
 
 
 # ================== ИНИЦИАЛИЗАЦИЯ И ЗАПУСК ==================
@@ -1562,13 +1515,17 @@ def init_db():
             with db.engine.begin() as conn:
                 if 'users' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('users')]
-                    if 'first_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
-                    if 'last_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
+                    if 'first_name' not in cols: conn.execute(
+                        text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
+                    if 'last_name' not in cols: conn.execute(
+                        text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
                     if 'phone' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(30)"))
                 if 'orders' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('orders')]
-                    if 'user_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
-                    if 'order_group_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
+                    if 'user_id' not in cols: conn.execute(
+                        text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+                    if 'order_group_id' not in cols: conn.execute(
+                        text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
 
             if not User.query.filter_by(username='admin').first():
                 admin_user = User(username='admin', is_admin=True)
@@ -1581,7 +1538,6 @@ def init_db():
 
 
 with app.app_context():
-    from flask_admin import helpers as admin_helpers
     init_db()
 
 threading.Thread(target=background_parser_loop, daemon=True).start()
