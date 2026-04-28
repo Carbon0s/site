@@ -17,7 +17,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import exc, text
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask_babel import Babel  # ДОБАВЛЕНО ДЛЯ РУСИФИКАЦИИ
+from flask_babel import Babel
 
 app = Flask(__name__)
 
@@ -38,12 +38,13 @@ DEFAULT_DB_URI = "postgresql://avnadmin:AVNS_JtcN8Ogu63nBIgc8odo@krossmag-krossm
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', DEFAULT_DB_URI)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Настройки пула для предотвращения зависаний БД
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     "pool_pre_ping": True,
-    "pool_recycle": 60,
-    "pool_size": 2,
-    "max_overflow": 2,
-    "pool_timeout": 10
+    "pool_recycle": 300,
+    "pool_size": 5,
+    "max_overflow": 10,
+    "pool_timeout": 15
 }
 
 db = SQLAlchemy(app)
@@ -73,8 +74,18 @@ def yandex_verification():
 </html>'''
 
 
+# Глобальный флаг для безопасного запуска фоновых задач на Render
+app_initialized = False
+
 @app.before_request
-def assign_anonymous_session():
+def initialize_app_and_session():
+    global app_initialized
+    if not app_initialized:
+        # Запускаем БД и парсер один раз при первом запросе (защита от зависаний Gunicorn)
+        init_db()
+        threading.Thread(target=background_parser_loop, daemon=True).start()
+        app_initialized = True
+
     session.permanent = True
     if 'uid' not in session:
         session['uid'] = str(uuid.uuid4())
@@ -106,7 +117,6 @@ COLORS = {
     'orange': 'Оранжевый', 'gray': 'Серый', 'beige': 'Бежевый', 'navy': 'Тёмно-синий',
     'brown': 'Коричневый', 'mint': 'Мятный', 'burgundy': 'Бордовый'
 }
-# НОВЫЕ БРЕНДЫ
 BRANDS = ['New Balance', 'Asics', 'Nike', 'Adidas', 'Hoka', 'Lacoste']
 BRAND_LOGOS = {
     'New Balance': 'https://ir.ozone.ru/s3/multimedia-1-r/w1200/7470042759.jpg',
@@ -128,12 +138,7 @@ def get_random_headers():
         "User-Agent": random.choice(ua_list),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
+        "Connection": "keep-alive"
     }
 
 
@@ -144,7 +149,6 @@ def update_exchange_rates():
         if r.status_code == 200:
             data = r.json()['rates']
             USD_TO_KRW, USD_TO_RUB = data.get('KRW', USD_TO_KRW), data.get('RUB', USD_TO_RUB)
-            print(f"✅ Курс обновлен: 1 USD = {USD_TO_KRW:.0f} KRW | {USD_TO_RUB:.2f} RUB")
     except:
         pass
 
@@ -273,8 +277,7 @@ def background_parser_loop():
                 for p in products:
                     if p.price_url and "kream.co.kr" in p.price_url:
                         product_ids_to_update.append((p.id, p.price_url, p.name, p.brand, p.color))
-            except Exception as e:
-                print(f"Ошибка чтения БД в фоне: {e}")
+            except Exception:
                 db.session.rollback()
             finally:
                 db.session.remove()
@@ -341,29 +344,50 @@ BASE_HTML = r"""
     <link rel="apple-touch-icon" href="/image/krossmag.png">
 
     <style>
-        body { padding-top: 90px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .product-card { transition: all 0.3s; cursor: pointer; border: none; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
-        .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
+        body { padding-top: 90px; background: #f4f6f8; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        /* КРАСИВЫЕ КАРТОЧКИ С АНИМАЦИЕЙ */
+        .product-card { 
+            background: #fff;
+            border: none; 
+            border-radius: 16px; 
+            overflow: hidden; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        .product-card:hover { 
+            transform: translateY(-8px); 
+            box-shadow: 0 15px 30px rgba(0,0,0,0.1); 
+        }
+        .product-card.unavailable { opacity: 0.6; filter: grayscale(40%); cursor: default; }
+        
+        /* АНИМАЦИИ КНОПОК */
+        .btn { transition: all 0.3s ease; }
+        .hover-lift { transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; }
+        .hover-lift:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; }
+        .hover-lift:active { transform: translateY(0) scale(0.98); box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important; }
+        
         .navbar-brand { font-weight: 900; font-size: 1.9rem; letter-spacing: -1px; }
         .main-logo { height: 50px; } 
+        
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
-        .card-img-wrapper { position: relative; background: #fff; padding: 10px; border-radius: 12px 12px 0 0;}
-        .card-img-top { height: 260px; object-fit: contain; }
-        .carousel-item img { height: 260px; object-fit: contain; padding: 10px; background: #fff; }
+        .card-img-wrapper { position: relative; background: #fff; padding: 15px; border-radius: 16px 16px 0 0;}
+        .card-img-top { height: 240px; object-fit: contain; transition: transform 0.3s ease; }
+        .product-card:hover .card-img-top { transform: scale(1.05); }
+        .carousel-item img { height: 240px; object-fit: contain; padding: 10px; background: #fff; }
         .carousel-control-prev-icon, .carousel-control-next-icon { filter: invert(1); width: 25px; height: 25px; }
 
-        .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.3s; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-decoration: none;}
-        .mini-btn:hover { background: #fff; transform: scale(1.1) translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+        .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-decoration: none;}
+        .mini-btn:hover { background: #fff; transform: scale(1.15) translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,0.15); }
+        .mini-btn:active { transform: scale(0.95); }
         .mini-btn.fav { top: 10px; right: 10px; }
         .mini-btn.cart { top: 55px; right: 10px; }
 
-        .hover-lift { transition: all 0.3s ease !important; }
-        .hover-lift:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; }
         .btn-share { transition: all 0.3s ease !important; border: 1px solid #dee2e6; }
         .btn-share:hover { background-color: #f8f9fa !important; transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; color: #6c757d; }
-        .cart-checkout-btn { color: #fff !important; transition: all 0.3s ease !important; }
-        .cart-checkout-btn:hover { color: #d3d3d3 !important; background-color: #218838 !important; }
 
         .order-tabs-container { position: relative; display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; gap: 5px; }
         .status-tab { padding: 12px 20px; cursor: pointer; color: #6c757d; font-weight: 700; text-decoration: none; position: relative; z-index: 1; transition: color 0.3s ease; }
@@ -371,46 +395,48 @@ BASE_HTML = r"""
         .status-tab.active { color: #000; }
         .tab-indicator { position: absolute; bottom: -2px; left: 0; height: 3px; background-color: #343a40; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 3px 3px 0 0; }
 
-        .color-circle { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ddd; cursor: pointer; margin: 5px; display: inline-block; transition: 0.2s; box-sizing: border-box; }
-        .color-circle.selected { border: 4px solid #888; box-shadow: 0 0 0 2px #fff inset; }
-        .brand-pill { border: 2px solid transparent; padding: 5px 15px; border-radius: 20px; cursor: pointer; background: #f8f9fa; display: flex; align-items: center; transition: 0.2s; font-weight: 500; color: #333; }
-        .brand-pill:hover { background: #e9ecef; }
-        .brand-pill.selected { border: 2px solid #888; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .color-circle { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ddd; cursor: pointer; margin: 5px; display: inline-block; transition: 0.2s cubic-bezier(0.25, 0.8, 0.25, 1); box-sizing: border-box; }
+        .color-circle:hover { transform: scale(1.1); }
+        .color-circle.selected { border: 4px solid #888; box-shadow: 0 0 0 2px #fff inset; transform: scale(1.1); }
+        
+        .brand-pill { border: 2px solid transparent; padding: 5px 15px; border-radius: 20px; cursor: pointer; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: flex; align-items: center; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); font-weight: 500; color: #333; }
+        .brand-pill:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .brand-pill.selected { border: 2px solid #888; background: #f8f9fa; box-shadow: 0 2px 4px rgba(0,0,0,0.05) inset; }
+        
         .back-btn { display: inline-flex; align-items: center; gap: 8px; color: #555; font-weight: 600; text-decoration: none; margin-bottom: 20px; transition: 0.2s; font-size: 1.1rem; }
-        .back-btn:hover { color: #000; transform: translateX(-3px); }
+        .back-btn:hover { color: #000; transform: translateX(-5px); }
         .card-color-circle { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #ccc; display: inline-block; margin-left: 8px; vertical-align: middle; }
         .brand-logo-mini { width: 24px; height: 24px; object-fit: contain; margin-right: 8px; border-radius: 4px; }
-        .icon-btn img { height: 26px; transition: 0.2s; filter: invert(1); }
-        .icon-btn:hover img { transform: scale(1.1); }
-        .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 6px; background: #f8f9fa; font-weight: 600;}
+        .icon-btn img { height: 26px; transition: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); filter: invert(1); }
+        .icon-btn:hover img { transform: scale(1.15) rotate(5deg); }
+        .size-badge { display: inline-block; border: 1px solid #ddd; padding: 5px 12px; margin: 3px; border-radius: 8px; background: #fff; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.02);}
         #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1055; }
         
-        /* Стили кнопок пагинации (по умолчанию) */
-        .mobile-pagination-btn { padding: 10px 20px; font-size: 1rem; border-radius: 8px; }
+        .mobile-pagination-btn { padding: 10px 20px; font-size: 1rem; border-radius: 8px; transition: all 0.3s; }
+        .mobile-pagination-btn:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
 
         /* ИСПРАВЛЕННАЯ ШАПКА ДЛЯ ТЕЛЕФОНОВ: Компактная + Сетка 2 в ряд */
         @media (max-width: 991px) {
-            body { padding-top: 95px; } /* Уменьшенный отступ шапки */
+            body { padding-top: 105px; } 
             .navbar .container { flex-direction: row; flex-wrap: wrap; justify-content: space-between; padding: 5px 10px; }
             .navbar-brand { margin: 0 auto; display: flex; justify-content: center; align-items: center; width: 100%; font-size: 1.3rem; margin-bottom: 5px; }
             .main-logo { height: 40px; margin-right: 8px !important; margin-bottom: 0; } 
             .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 6px !important; }
-            .text-truncate-mobile-wrap { white-space: normal !important; overflow: visible; text-overflow: clip; }
             
             /* Карточка товара на мобильных (уменьшенные шрифты и отступы) */
-            .product-card .card-body { padding: 10px; }
-            .product-card h5 { font-size: 0.9rem; line-height: 1.2; margin-bottom: 5px; }
+            .product-card .card-body { padding: 12px 10px; }
+            .product-card h5 { font-size: 0.85rem; line-height: 1.3; margin-bottom: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; white-space: normal; height: 2.6em; }
             .price-main { font-size: 1.1rem; }
             .price-main span { font-size: 0.8rem; }
-            .card-img-top { height: 160px; } /* Меньше картинка на телефоне */
-            .carousel-item img { height: 160px; }
-            .mini-btn { width: 30px; height: 30px; font-size: 0.9rem; }
-            .mini-btn.cart { top: 45px; }
+            .card-img-top { height: 140px; } 
+            .carousel-item img { height: 140px; }
+            .mini-btn { width: 32px; height: 32px; font-size: 0.9rem; }
+            .mini-btn.cart { top: 48px; }
 
             /* Огромные кнопки пагинации на телефоне */
             .mobile-pagination-btn {
-                padding: 15px 30px !important;
-                font-size: 1.2rem !important;
+                padding: 15px 25px !important;
+                font-size: 1.1rem !important;
                 font-weight: bold;
                 border-radius: 12px;
                 width: auto;
@@ -421,7 +447,7 @@ BASE_HTML = r"""
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
         <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="/">
+            <a class="navbar-brand d-flex align-items-center hover-lift" href="/">
                 <img src="https://i.postimg.cc/wy0jWDdm/logo.png" alt="Logo" class="main-logo">KROSSMAG
             </a>
             <div class="ms-auto d-flex align-items-center gap-3">
@@ -433,18 +459,18 @@ BASE_HTML = r"""
                 </a>
 
                 {% if current_user.is_authenticated and getattr(current_user, 'is_admin', False) == False %}
-                    <a href="/my_orders" class="btn btn-sm btn-outline-light fw-bold ms-1">📦 Заказы</a>
-                    <a href="/logout" class="btn btn-sm btn-danger fw-bold">Выход</a>
+                    <a href="/my_orders" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">📦 Заказы</a>
+                    <a href="/logout" class="btn btn-sm btn-danger fw-bold hover-lift">Выход</a>
                 {% elif current_user.is_authenticated and getattr(current_user, 'is_admin', False) == True %}
-                    <a href="/admin" class="btn btn-sm btn-outline-light fw-bold ms-1">Админка</a>
-                    <a href="/logout" class="btn btn-sm btn-danger fw-bold">Выход</a>
+                    <a href="/admin" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">Админка</a>
+                    <a href="/logout" class="btn btn-sm btn-danger fw-bold hover-lift">Выход</a>
                 {% else %}
-                    <a href="/login" class="btn btn-sm btn-outline-light fw-bold ms-1">Вход</a>
-                    <a href="/register" class="btn btn-sm btn-light fw-bold text-dark">Регистрация</a>
+                    <a href="/login" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">Вход</a>
+                    <a href="/register" class="btn btn-sm btn-light fw-bold text-dark hover-lift">Регистрация</a>
                 {% endif %}
                 
                 <a href="https://t.me/KROSSMAG_ry" target="_blank" class="d-flex align-items-center ms-1" title="Наш Telegram-канал">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Telegram_logo_icon.svg/1280px-Telegram_logo_icon.svg.png" style="width: 28px; height: 28px; border-radius: 50%; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Telegram_logo_icon.svg/1280px-Telegram_logo_icon.svg.png" style="width: 28px; height: 28px; border-radius: 50%; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.15) rotate(-5deg)'" onmouseout="this.style.transform='scale(1)'">
                 </a>
             </div>
         </div>
@@ -453,7 +479,7 @@ BASE_HTML = r"""
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, msg in messages %}
-                    <div class="alert alert-{{ category }} alert-dismissible fade show">{{ msg }} <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+                    <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm border-0 rounded-3">{{ msg }} <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
@@ -464,7 +490,7 @@ BASE_HTML = r"""
     <script>
         function showToast(msg, type='success') {
             const t = document.createElement('div');
-            t.className = `toast align-items-center text-bg-${type} border-0 mb-2 show`;
+            t.className = `toast align-items-center text-bg-${type} border-0 mb-2 show shadow-lg`;
             t.innerHTML = `<div class="d-flex"><div class="toast-body fw-bold">${msg}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
             document.getElementById('toast-container').appendChild(t);
             setTimeout(() => t.remove(), 3000);
@@ -532,8 +558,8 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <div class="row mb-4">
     <div class="col-12">
         <form method="GET" class="d-flex gap-2">
-            <input type="text" name="search" class="form-control form-control-lg" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
-            <button type="button" class="btn btn-outline-dark btn-lg px-4" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">Фильтры</button>
+            <input type="text" name="search" class="form-control form-control-lg border-0 shadow-sm" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
+            <button type="button" class="btn btn-outline-dark btn-lg px-4 hover-lift" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">Фильтры</button>
         </form>
     </div>
 </div>
@@ -566,12 +592,12 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <div class="col-md-4 mb-3">
                     <label class="form-label fw-bold">Цена (₽)</label>
                     <div class="d-flex gap-2">
-                        <input type="number" name="min_p" class="form-control bg-light" placeholder="От" value="{{ min_p or '' }}">
-                        <input type="number" name="max_p" class="form-control bg-light" placeholder="До" value="{{ max_p or '' }}">
+                        <input type="number" name="min_p" class="form-control bg-light border-0" placeholder="От" value="{{ min_p or '' }}">
+                        <input type="number" name="max_p" class="form-control bg-light border-0" placeholder="До" value="{{ max_p or '' }}">
                     </div>
                 </div>
             </div>
-            <button type="submit" class="btn btn-dark mt-2 px-4">Показать</button>
+            <button type="submit" class="btn btn-dark mt-2 px-4 hover-lift">Показать</button>
             <a href="/" class="btn btn-link mt-2 text-muted">Сбросить</a>
         </form>
     </div>
@@ -580,7 +606,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <div class="row" id="products-container">
     {% for p in pagination.items %}
     <div class="col-6 col-md-4 col-lg-3 mb-4">
-        <div class="card product-card h-100 {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
+        <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
             <div id="carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                 <div class="carousel-inner">
                     <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="eager">{% endif %}</div>
@@ -597,7 +623,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
             </div>
             <div class="card-body d-flex flex-column bg-white">
-                <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                <h5 class="card-title" title="{{ p.name }}">{{ p.name }}</h5>
                 <div class="d-flex align-items-center mb-2">
                     <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                     <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -612,7 +638,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <span class="text-warning fs-6">Загрузка...</span>
                         {% endif %}
                     </p>
-                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
+                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold hover-lift" onclick="event.stopPropagation()">Заказать</a>
                 {% else %}
                     <p class="text-muted fw-bold mb-2">Нет в наличии</p>
                     <button class="btn btn-secondary btn-sm w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
@@ -625,7 +651,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 <div class="d-flex flex-wrap justify-content-center align-items-center mt-4 mb-5 gap-3">
     {% if pagination.has_prev %}
-        <a href="{{ url_for('index', page=pagination.prev_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow">
+        <a href="{{ url_for('index', page=pagination.prev_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow hover-lift">
             ⬅ Назад
         </a>
     {% endif %}
@@ -633,7 +659,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
     <span class="fw-bold fs-5 text-muted px-3">Страница {{ pagination.page }} из {{ pagination.pages }}</span>
 
     {% if pagination.has_next %}
-        <a href="{{ url_for('index', page=pagination.next_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow">
+        <a href="{{ url_for('index', page=pagination.next_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow hover-lift">
             Дальше ➡
         </a>
     {% endif %}
@@ -682,14 +708,14 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             {% if not product.available %}<div class="position-absolute top-50 start-50 translate-middle bg-dark text-white px-4 py-2 rounded-3 fs-4 fw-bold opacity-75">Нет в наличии</div>{% endif %}
         </div>
 
-        <div class="col-md-6 p-5 bg-light">
+        <div class="col-md-6 p-5 bg-white">
             <h2 class="fw-bold mb-2">{{ product.name }}</h2>
             <div class="d-flex align-items-center mb-4 fs-5 text-muted">
                 <span class="me-3 d-flex align-items-center"><img src="{{ BRAND_LOGOS.get(product.brand) }}" class="brand-logo-mini" style="width:24px; height:24px;"> <strong>{{ product.brand }}</strong></span>
                 <span class="d-flex align-items-center"><strong>Цвет:</strong> <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div></span>
             </div>
 
-            <div class="my-4 p-4 bg-white rounded-4 shadow-sm">
+            <div class="my-4 p-4 bg-light rounded-4 border-0">
                 {% if product.available %}
                     <p id="price-{{ product.id }}" class="fs-1 fw-bold text-dark mb-0">
                         {% if product.last_krw_price and product.last_krw_price > 10000 %}
@@ -711,7 +737,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <a href="/api/fav/add/{{ product.id }}" class="btn btn-outline-danger hover-lift btn-lg flex-fill fw-bold bg-white shadow-sm" style="min-width: 30%;">❤️ В избранное</a>
                 <a href="/api/cart/add/{{ product.id }}" class="btn btn-outline-dark hover-lift btn-lg flex-fill fw-bold bg-white shadow-sm {% if not product.available %}disabled{% endif %}" style="min-width: 30%;">🛒 В корзину</a>
                 <div class="dropdown flex-fill d-flex" style="min-width: 30%;">
-                    <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border" type="button" data-bs-toggle="dropdown" aria-expanded="false">🔗 Поделиться</button>
+                    <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border shadow-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false">🔗 Поделиться</button>
                     <ul class="dropdown-menu w-100 shadow border-0 rounded-3">
                         <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ product.name|replace("'", "\\'") }}')">📲 Поделиться</a></li>
                         <li class="d-block d-md-none"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.id }}')">🔗 Скопировать ссылку</a></li>
@@ -734,11 +760,11 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 {% if related %}
 <div class="mt-5 pt-4 border-top">
-    <h3 class="fw-bold mb-4">Вам также может понравиться:</h3>
+    <h3 class="fw-bold mb-4">Возможно вам также понравится:</h3>
     <div class="row">
         {% for p in related %}
         <div class="col-6 col-md-4 col-lg-3 mb-4">
-            <div class="card product-card h-100 {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
+            <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
                 <div id="rel_carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                     <div class="carousel-inner">
                         <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy">{% endif %}</div>
@@ -747,7 +773,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
                 </div>
                 <div class="card-body d-flex flex-column bg-white">
-                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                    <h5 class="card-title text-truncate-mobile-wrap" title="{{ p.name }}">{{ p.name }}</h5>
                     <div class="d-flex align-items-center mb-2">
                         <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                         <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -761,7 +787,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                                 <span class="text-warning fs-6">Загрузка...</span>
                             {% endif %}
                         </p>
-                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold" onclick="event.stopPropagation()">Заказать</a>
+                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold hover-lift" onclick="event.stopPropagation()">Заказать</a>
                     {% else %}
                         <p class="text-muted fw-bold mb-2">Нет в наличии</p>
                         <button class="btn btn-secondary btn-sm w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
@@ -779,12 +805,12 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
 <div class="d-flex align-items-center justify-content-between mb-4">
     <h2 class="fw-bold m-0">❤️ Моё избранное</h2>
-    <a href="/api/fav/clear" class="btn btn-outline-danger btn-sm">Очистить всё</a>
+    <a href="/api/fav/clear" class="btn btn-outline-danger btn-sm hover-lift">Очистить всё</a>
 </div>
 <div class="row">
     {% for f in favorites %}
     <div class="col-6 col-md-4 col-lg-3 mb-4">
-        <div class="card product-card h-100 {% if not f.product.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ f.product.id }}'">
+        <div class="product-card {% if not f.product.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ f.product.id }}'">
             <div class="card-img-wrapper">
                 <img src="/proxy_image?url={{ f.product.image }}" class="card-img-top w-100">
                 <a href="/api/fav/remove/{{ f.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="Убрать">❌</a>
@@ -796,7 +822,7 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                         {{ ((f.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                     {% else %}Загрузка...{% endif %}
                 </p>
-                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark btn-sm mt-auto" onclick="event.stopPropagation()">Заказать</a>{% endif %}
+                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark btn-sm mt-auto hover-lift" onclick="event.stopPropagation()">Заказать</a>{% endif %}
             </div>
         </div>
     </div>
@@ -808,21 +834,21 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
 <div class="d-flex align-items-center justify-content-between mb-4">
     <h2 class="fw-bold m-0">🛒 Моя корзина</h2>
-    <a href="/api/cart/clear" class="btn btn-outline-secondary btn-sm">Очистить корзину</a>
+    <a href="/api/cart/clear" class="btn btn-outline-secondary btn-sm hover-lift">Очистить корзину</a>
 </div>
 <div class="row">
     <div class="col-md-8">
         {% for c in cart_items %}
-        <div class="card mb-3 shadow-sm border-0" onclick="window.location.href='/product/{{ c.product.id }}'" style="cursor:pointer;">
+        <div class="card mb-3 shadow-sm border-0 rounded-4" onclick="window.location.href='/product/{{ c.product.id }}'" style="cursor:pointer; transition: transform 0.2s;">
             <div class="row g-0">
-                <div class="col-4 col-md-3 bg-white p-2 d-flex align-items-center justify-content-center">
+                <div class="col-4 col-md-3 bg-white p-2 d-flex align-items-center justify-content-center" style="border-radius: 16px 0 0 16px;">
                     <img src="/proxy_image?url={{ c.product.image }}" class="img-fluid rounded" style="max-height:120px;">
                 </div>
                 <div class="col-8 col-md-9">
                     <div class="card-body d-flex flex-column h-100">
                         <div class="d-flex justify-content-between align-items-start">
                             <h5 class="card-title fw-bold text-truncate pe-3">{{ c.product.name }}</h5>
-                            <a href="/api/cart/remove/{{ c.id }}" class="text-danger text-decoration-none fs-5" onclick="event.stopPropagation()">✖</a>
+                            <a href="/api/cart/remove/{{ c.id }}" class="text-danger text-decoration-none fs-5 hover-lift" onclick="event.stopPropagation()">✖</a>
                         </div>
                         <p class="text-muted small mb-2">{{ c.product.brand }}</p>
                         <div class="mt-auto d-flex justify-content-between align-items-end">
@@ -838,7 +864,7 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
         {% endfor %}
         {% if not cart_items %}
-            <div class="text-center py-5"><h4 class="text-muted">Корзина пуста</h4><a href="/" class="btn btn-dark mt-3">В каталог</a></div>
+            <div class="text-center py-5"><h4 class="text-muted">Корзина пуста</h4><a href="/" class="btn btn-dark mt-3 hover-lift">В каталог</a></div>
         {% endif %}
     </div>
     {% if cart_items %}
@@ -870,7 +896,7 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <div class="mb-4 p-3 bg-light rounded border border-light-subtle">
                     <h5 class="fw-bold mb-3 border-bottom pb-2">Товары в заказе: Укажите размер для каждого!</h5>
                     {% for item in items %}
-                    <div class="d-flex align-items-center mb-3 p-3 bg-white rounded shadow-sm border">
+                    <div class="d-flex align-items-center mb-3 p-3 bg-white rounded shadow-sm border border-light">
                         <img src="/proxy_image?url={{ item.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">
                         <div class="w-100">
                             <h6 class="fw-bold mb-1" style="font-size: 1rem; color: #333;">{{ item.product.name }}</h6>
@@ -878,7 +904,7 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
                             <div class="mt-2 bg-light p-2 rounded">
                                 <label class="form-label small fw-bold text-primary mb-1">▶ Выберите размер для: <span class="text-dark">{{ item.product.name }}</span></label>
-                                <select name="size_{{ item.product.id }}" class="form-select form-select-sm border-primary" required>
+                                <select name="size_{{ item.product.id }}" class="form-select form-select-sm border-primary shadow-sm" required>
                                     <option value="">-- Обязательно выберите размер --</option>
                                     {% for s in item.product.sizes.split(',') %}
                                         {% if s.strip() %}<option value="{{ s.strip() }}">{{ s.strip() }}</option>{% endif %}
@@ -895,20 +921,20 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label text-muted">Имя</label>
-                        <input type="text" name="name" id="o_name" class="form-control form-control-lg" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
+                        <input type="text" name="name" id="o_name" class="form-control form-control-lg border-0 bg-light shadow-sm" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label text-muted">Фамилия</label>
-                        <input type="text" name="surname" id="o_surname" class="form-control form-control-lg" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
+                        <input type="text" name="surname" id="o_surname" class="form-control form-control-lg border-0 bg-light shadow-sm" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
                     </div>
                     <div class="col-12">
                         <label class="form-label text-muted">Телефон</label>
-                        <input type="tel" name="phone" id="o_phone" class="form-control form-control-lg" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
+                        <input type="tel" name="phone" id="o_phone" class="form-control form-control-lg border-0 bg-light shadow-sm" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" required>
                     </div>
-                    <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
-                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема / Адмирала Ушакова" required></div>
-                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" required></div>
-                    <div class="col-12"><label class="form-label text-muted">Общий комментарий к заказу</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
+                    <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg border-0 bg-light shadow-sm"></div>
+                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg border-0 bg-light shadow-sm" placeholder="Артема / Адмирала Ушакова" required></div>
+                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg border-0 bg-light shadow-sm" placeholder="123А" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Общий комментарий к заказу</label><textarea name="comment" class="form-control border-0 bg-light shadow-sm" rows="2"></textarea></div>
                 </div>
                 <button type="submit" class="btn btn-dark hover-lift btn-lg mt-4 w-100 fw-bold py-3 shadow">Подтвердить весь заказ</button>
             </form>
@@ -924,26 +950,26 @@ ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         <div class="card shadow-sm border-0 p-4 rounded-4">
             <h3 class="mb-4 fw-bold">Оформление заказа</h3>
             <p class="text-danger small fw-bold mb-4">📍 Доставка работает по городу Донецк, ДНР</p>
-            <div class="d-flex align-items-center mb-4 p-3 bg-light rounded">
+            <div class="d-flex align-items-center mb-4 p-3 bg-light rounded shadow-sm">
                 <div class="card-color-circle me-3 shadow-sm" style="width:30px; height:30px; background-color: {{ product_color }};"></div>
                 <h5 class="m-0 fw-bold">{{ product_name }}</h5>
             </div>
             <form method="POST">
                 <input type="hidden" name="product_id" value="{{ product_id }}">
                 <div class="row g-3">
-                    <div class="col-md-6"><label class="form-label text-muted">Имя</label><input type="text" name="name" class="form-control form-control-lg" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
-                    <div class="col-md-6"><label class="form-label text-muted">Фамилия</label><input type="text" name="surname" class="form-control form-control-lg" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
-                    <div class="col-12"><label class="form-label text-muted">Телефон</label><input type="tel" name="phone" class="form-control form-control-lg" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
-                    <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg"></div>
-                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg" placeholder="Артема" required></div>
-                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg" placeholder="123А" required></div>
+                    <div class="col-md-6"><label class="form-label text-muted">Имя</label><input type="text" name="name" class="form-control form-control-lg border-0 bg-light shadow-sm" value="{{ current_user.first_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
+                    <div class="col-md-6"><label class="form-label text-muted">Фамилия</label><input type="text" name="surname" class="form-control form-control-lg border-0 bg-light shadow-sm" value="{{ current_user.last_name if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Телефон</label><input type="tel" name="phone" class="form-control form-control-lg border-0 bg-light shadow-sm" value="{{ current_user.phone if current_user.is_authenticated and not current_user.is_admin else '' }}" required></div>
+                    <div class="col-12"><label class="form-label text-muted">Email (опционально)</label><input type="email" name="email" class="form-control form-control-lg border-0 bg-light shadow-sm"></div>
+                    <div class="col-md-8"><label class="form-label text-muted">Улица (в Донецке)</label><input type="text" name="street" class="form-control form-control-lg border-0 bg-light shadow-sm" placeholder="Артема" required></div>
+                    <div class="col-md-4"><label class="form-label text-muted">Дом / Буква</label><input type="text" name="house" class="form-control form-control-lg border-0 bg-light shadow-sm" placeholder="123А" required></div>
                     <div class="col-md-12"><label class="form-label text-muted">Размер</label>
-                        <select name="size" class="form-select form-select-lg" required>
+                        <select name="size" class="form-select form-select-lg border-0 bg-light shadow-sm" required>
                             <option value="">Выберите размер</option>
                             {% for s in sizes %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
                         </select>
                     </div>
-                    <div class="col-12"><label class="form-label text-muted">Комментарий</label><textarea name="comment" class="form-control" rows="2"></textarea></div>
+                    <div class="col-12"><label class="form-label text-muted">Комментарий</label><textarea name="comment" class="form-control border-0 bg-light shadow-sm" rows="2"></textarea></div>
                 </div>
                 <button type="submit" class="btn btn-dark hover-lift btn-lg mt-4 w-100 fw-bold py-3 shadow">Подтвердить заказ</button>
             </form>
@@ -955,9 +981,9 @@ ORDER_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 THANKS_HTML = BASE_HTML.replace("{{ content | safe }}",
                                 r"""<div class="text-center py-5"><div class="display-1 mb-3">🎉</div><h2 class="text-success fw-bold">Заказ успешно оформлен!</h2><p class="lead mt-3 text-muted">Менеджер свяжется с вами в ближайшее время для подтверждения.</p><a href="/my_orders" class="btn btn-dark hover-lift btn-lg mt-4 px-5">Следить за заказом</a></div>""")
 LOGIN_HTML = BASE_HTML.replace("{{ content | safe }}",
-                               r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-4"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Вход</h3><form method="post" action="/login"><input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Логин или Телефон" required><input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Войти</button></form><p class="mt-4 text-center text-muted">Еще нет аккаунта? <a href="/register" class="fw-bold text-dark text-decoration-none">Зарегистрируйтесь</a></p></div></div></div>""")
+                               r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-4"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Вход</h3><form method="post" action="/login"><input type="text" name="username" class="form-control form-control-lg mb-3 border-0 bg-light shadow-sm" placeholder="Логин или Телефон" required><input type="password" name="password" class="form-control form-control-lg mb-4 border-0 bg-light shadow-sm" placeholder="Пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Войти</button></form><p class="mt-4 text-center text-muted">Еще нет аккаунта? <a href="/register" class="fw-bold text-dark text-decoration-none hover-lift">Зарегистрируйтесь</a></p></div></div></div>""")
 REGISTER_HTML = BASE_HTML.replace("{{ content | safe }}",
-                                  r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-5"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Регистрация</h3><form method="post" action="/register"><div class="row g-2 mb-3"><div class="col-md-6"><input type="text" name="first_name" class="form-control form-control-lg" placeholder="Имя" required></div><div class="col-md-6"><input type="text" name="last_name" class="form-control form-control-lg" placeholder="Фамилия" required></div></div><input type="tel" name="phone" class="form-control form-control-lg mb-3" placeholder="Телефон (+7...)" required><input type="text" name="username" class="form-control form-control-lg mb-3" placeholder="Придумайте логин" required><input type="password" name="password" class="form-control form-control-lg mb-4" placeholder="Придумайте пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Создать аккаунт</button></form><p class="mt-4 text-center text-muted">Уже есть аккаунт? <a href="/login" class="fw-bold text-dark text-decoration-none">Войти</a></p></div></div></div>""")
+                                  r"""<a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a><div class="row justify-content-center mt-5"><div class="col-md-5"><div class="card shadow-sm border-0 rounded-4 p-4"><h3 class="text-center mb-4 fw-bold">Регистрация</h3><form method="post" action="/register"><div class="row g-2 mb-3"><div class="col-md-6"><input type="text" name="first_name" class="form-control form-control-lg border-0 bg-light shadow-sm" placeholder="Имя" required></div><div class="col-md-6"><input type="text" name="last_name" class="form-control form-control-lg border-0 bg-light shadow-sm" placeholder="Фамилия" required></div></div><input type="tel" name="phone" class="form-control form-control-lg mb-3 border-0 bg-light shadow-sm" placeholder="Телефон (+7...)" required><input type="text" name="username" class="form-control form-control-lg mb-3 border-0 bg-light shadow-sm" placeholder="Придумайте логин" required><input type="password" name="password" class="form-control form-control-lg mb-4 border-0 bg-light shadow-sm" placeholder="Придумайте пароль" required><button type="submit" class="btn btn-dark btn-lg w-100 fw-bold hover-lift">Создать аккаунт</button></form><p class="mt-4 text-center text-muted">Уже есть аккаунт? <a href="/login" class="fw-bold text-dark text-decoration-none hover-lift">Войти</a></p></div></div></div>""")
 
 MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
@@ -970,7 +996,7 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <div class="tab-content">
     <div class="tab-pane fade show active" id="active_orders" style="display: block;">
         {% if not active_orders %}
-            <div class="text-center py-5"><h5 class="text-muted">У вас пока нет активных заказов</h5><a href="/" class="btn btn-dark mt-3">В каталог</a></div>
+            <div class="text-center py-5"><h5 class="text-muted">У вас пока нет активных заказов</h5><a href="/" class="btn btn-dark mt-3 hover-lift">В каталог</a></div>
         {% else %}
             <div class="row">
                 {% for o in active_orders %}
@@ -1068,7 +1094,7 @@ def index():
         brand_list = [b for b in brands.split(',') if b]
         if brand_list: query = query.filter(Product.brand.in_(brand_list))
 
-        # Перевод рублей обратно в воны для фильтрации напрямую в базе данных (для пагинации)
+        # Перевод рублей в воны для базы данных (чтобы корректно работала пагинация)
         if min_p or max_p:
             krw_factor = USD_TO_KRW / (USD_TO_RUB * MARKUP)
             if min_p:
@@ -1078,7 +1104,7 @@ def index():
                 max_krw = max_p * krw_factor
                 query = query.filter(Product.last_krw_price <= max_krw)
 
-        # Вытягиваем из базы только 30 товаров (ускоряет работу сервера!)
+        # Вытягиваем из базы только 30 товаров
         pagination = query.order_by(Product.id.desc()).paginate(page=page, per_page=30, error_out=False)
 
         return render_template_string(
@@ -1106,6 +1132,7 @@ def product_detail(product_id):
         base_price = get_display_price(product.last_krw_price)
         base_rub = base_price['rub'] if base_price else 0
 
+        # Берем все товары того же бренда, исключая текущий
         all_brand_products = Product.query.filter(Product.brand == product.brand, Product.id != product.id).all()
         related_candidates = []
 
@@ -1114,13 +1141,14 @@ def product_detail(product_id):
             p_price = get_display_price(p.last_krw_price)
             
             if p_price and base_rub:
+                # Проверяем разброс +- 2000 рублей
                 if abs(p_price['rub'] - base_rub) <= 2000:
                     related_candidates.append(p)
             elif not base_rub:
                 related_candidates.append(p)
 
         random.shuffle(related_candidates)
-        related = related_candidates[:10]
+        related = related_candidates[:10]  # Берем 10 случайных
 
         return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS,
                                       BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
@@ -1537,10 +1565,9 @@ def init_db():
             time.sleep(2)
 
 
-with app.app_context():
-    init_db()
-
-threading.Thread(target=background_parser_loop, daemon=True).start()
+# Убрали if __name__ == '__main__': для безопасного запуска на Render
+# Логика запуска перенесена в функцию initialize_app_and_session (декоратор @app.before_request)
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
+
