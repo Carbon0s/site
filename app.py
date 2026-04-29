@@ -99,7 +99,8 @@ def shutdown_session(exception=None):
 # ================== КОНСТАНТЫ И СТАТУСЫ ==================
 USD_TO_KRW = 1483.0
 USD_TO_RUB = 77.38
-MARKUP = 1.65
+# ИЗМЕНЕНА НАЦЕНКА ДО 80% (1.80)
+MARKUP = 1.80
 
 ORDER_STATUSES = [
     ('В ожидании подтверждения', 'В ожидании подтверждения'),
@@ -344,25 +345,27 @@ BASE_HTML = r"""
     <link rel="apple-touch-icon" href="/image/krossmag.png">
 
     <style>
-        body { padding-top: 90px; background: #f4f6f8; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { padding-top: 90px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         
-        /* КРАСИВЫЕ КАРТОЧКИ С АНИМАЦИЕЙ */
+        /* КАРТОЧКА ПК (ВОЗВРАЩЕНА К ОРИГИНАЛЬНОМУ СТИЛЮ) */
         .product-card { 
-            background: #fff;
+            background: #fff; 
             border: none; 
-            border-radius: 16px; 
+            border-radius: 12px; 
             overflow: hidden; 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-            height: 100%;
-            display: flex;
-            flex-direction: column;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); 
+            height: 100%; 
+            display: flex; 
+            flex-direction: column; 
         }
-        .product-card:hover { 
-            transform: translateY(-8px); 
-            box-shadow: 0 15px 30px rgba(0,0,0,0.1); 
-        }
-        .product-card.unavailable { opacity: 0.6; filter: grayscale(40%); cursor: default; }
+        .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
+        .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
+        
+        .card-img-wrapper { position: relative; background: #fff; padding: 10px; border-radius: 12px 12px 0 0; }
+        .card-img-top { height: 260px; object-fit: contain; transition: transform 0.3s ease; }
+        .carousel-item img { height: 260px; object-fit: contain; padding: 10px; background: #fff; }
+        .carousel-control-prev-icon, .carousel-control-next-icon { filter: invert(1); width: 25px; height: 25px; }
         
         /* АНИМАЦИИ КНОПОК */
         .btn { transition: all 0.3s ease; }
@@ -374,11 +377,6 @@ BASE_HTML = r"""
         .main-logo { height: 50px; } 
         
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
-        .card-img-wrapper { position: relative; background: #fff; padding: 15px; border-radius: 16px 16px 0 0;}
-        .card-img-top { height: 240px; object-fit: contain; transition: transform 0.3s ease; }
-        .product-card:hover .card-img-top { transform: scale(1.05); }
-        .carousel-item img { height: 240px; object-fit: contain; padding: 10px; background: #fff; }
-        .carousel-control-prev-icon, .carousel-control-next-icon { filter: invert(1); width: 25px; height: 25px; }
 
         .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-decoration: none;}
         .mini-btn:hover { background: #fff; transform: scale(1.15) translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,0.15); }
@@ -415,7 +413,7 @@ BASE_HTML = r"""
         .mobile-pagination-btn { padding: 10px 20px; font-size: 1rem; border-radius: 8px; transition: all 0.3s; }
         .mobile-pagination-btn:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
 
-        /* ИСПРАВЛЕННАЯ ШАПКА ДЛЯ ТЕЛЕФОНОВ: Компактная + Сетка 2 в ряд */
+        /* ИСПРАВЛЕННАЯ ШАПКА И СЕТКА ДЛЯ ТЕЛЕФОНОВ */
         @media (max-width: 991px) {
             body { padding-top: 105px; } 
             .navbar .container { flex-direction: row; flex-wrap: wrap; justify-content: space-between; padding: 5px 10px; }
@@ -423,15 +421,26 @@ BASE_HTML = r"""
             .main-logo { height: 40px; margin-right: 8px !important; margin-bottom: 0; } 
             .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 6px !important; }
             
-            /* Карточка товара на мобильных (уменьшенные шрифты и отступы) */
-            .product-card .card-body { padding: 12px 10px; }
+            /* Карточка товара на мобильных: меньше отступов для сетки 2х2 */
+            .product-card { border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+            .product-card .card-body { padding: 10px 8px; }
             .product-card h5 { font-size: 0.85rem; line-height: 1.3; margin-bottom: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; white-space: normal; height: 2.6em; }
             .price-main { font-size: 1.1rem; }
             .price-main span { font-size: 0.8rem; }
+            
+            .card-img-wrapper { padding: 5px; }
             .card-img-top { height: 140px; } 
             .carousel-item img { height: 140px; }
-            .mini-btn { width: 32px; height: 32px; font-size: 0.9rem; }
-            .mini-btn.cart { top: 48px; }
+            
+            /* УМЕНЬШЕННЫЕ КНОПКИ ИЗБРАННОГО И КОРЗИНЫ ДЛЯ ТЕЛЕФОНОВ */
+            .mini-btn { width: 28px; height: 28px; font-size: 0.8rem; border-width: 0.5px; }
+            .mini-btn.fav { top: 8px; right: 8px; }
+            .mini-btn.cart { top: 40px; right: 8px; }
+            /* Уменьшаем стрелки перелистывания чтобы не пересекались с кнопками */
+            .carousel-control-prev-icon, .carousel-control-next-icon { width: 20px; height: 20px; }
+            
+            /* Кнопка "Заказать" на мобильных */
+            .order-btn { padding: 0.375rem 0.5rem; font-size: 0.85rem; border-radius: 6px; }
 
             /* Огромные кнопки пагинации на телефоне */
             .mobile-pagination-btn {
@@ -623,7 +632,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
             </div>
             <div class="card-body d-flex flex-column bg-white">
-                <h5 class="card-title" title="{{ p.name }}">{{ p.name }}</h5>
+                <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
                 <div class="d-flex align-items-center mb-2">
                     <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                     <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -638,10 +647,10 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <span class="text-warning fs-6">Загрузка...</span>
                         {% endif %}
                     </p>
-                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold hover-lift" onclick="event.stopPropagation()">Заказать</a>
+                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>
                 {% else %}
                     <p class="text-muted fw-bold mb-2">Нет в наличии</p>
-                    <button class="btn btn-secondary btn-sm w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
+                    <button class="btn btn-secondary w-100 mt-auto order-btn" disabled onclick="event.stopPropagation()">Недоступно</button>
                 {% endif %}
             </div>
         </div>
@@ -708,14 +717,14 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             {% if not product.available %}<div class="position-absolute top-50 start-50 translate-middle bg-dark text-white px-4 py-2 rounded-3 fs-4 fw-bold opacity-75">Нет в наличии</div>{% endif %}
         </div>
 
-        <div class="col-md-6 p-5 bg-white">
+        <div class="col-md-6 p-5 bg-light">
             <h2 class="fw-bold mb-2">{{ product.name }}</h2>
             <div class="d-flex align-items-center mb-4 fs-5 text-muted">
                 <span class="me-3 d-flex align-items-center"><img src="{{ BRAND_LOGOS.get(product.brand) }}" class="brand-logo-mini" style="width:24px; height:24px;"> <strong>{{ product.brand }}</strong></span>
                 <span class="d-flex align-items-center"><strong>Цвет:</strong> <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div></span>
             </div>
 
-            <div class="my-4 p-4 bg-light rounded-4 border-0">
+            <div class="my-4 p-4 bg-white rounded-4 shadow-sm">
                 {% if product.available %}
                     <p id="price-{{ product.id }}" class="fs-1 fw-bold text-dark mb-0">
                         {% if product.last_krw_price and product.last_krw_price > 10000 %}
@@ -773,7 +782,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
                 </div>
                 <div class="card-body d-flex flex-column bg-white">
-                    <h5 class="card-title text-truncate-mobile-wrap" title="{{ p.name }}">{{ p.name }}</h5>
+                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
                     <div class="d-flex align-items-center mb-2">
                         <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                         <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -787,10 +796,10 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                                 <span class="text-warning fs-6">Загрузка...</span>
                             {% endif %}
                         </p>
-                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold hover-lift" onclick="event.stopPropagation()">Заказать</a>
+                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>
                     {% else %}
                         <p class="text-muted fw-bold mb-2">Нет в наличии</p>
-                        <button class="btn btn-secondary btn-sm w-100 mt-auto" disabled onclick="event.stopPropagation()">Недоступно</button>
+                        <button class="btn btn-secondary w-100 mt-auto order-btn" disabled onclick="event.stopPropagation()">Недоступно</button>
                     {% endif %}
                 </div>
             </div>
@@ -822,7 +831,7 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                         {{ ((f.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                     {% else %}Загрузка...{% endif %}
                 </p>
-                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark btn-sm mt-auto hover-lift" onclick="event.stopPropagation()">Заказать</a>{% endif %}
+                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark w-100 mt-auto hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>{% endif %}
             </div>
         </div>
     </div>
@@ -1570,4 +1579,3 @@ def init_db():
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
-
