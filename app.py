@@ -737,7 +737,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
             <div class="mb-4">
                 <h6 class="fw-bold text-dark mb-2">Доступные размеры:</h6>
-                <div>{% for s in product.sizes.split(',') %}{% if s.strip() %}<span class="size-badge">{{ s.strip() }}</span>{% endif %}{% endfor %}</div>
+                <div>{% for s in range(36, 50) %}<span class="size-badge">{{ s }}</span>{% endfor %}</div>
             </div>
 
             <p class="lead mb-5 text-secondary">{{ product.description or 'Подробное описание товара временно отсутствует.' }}</p>
@@ -915,8 +915,8 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                                 <label class="form-label small fw-bold text-primary mb-1">▶ Выберите размер для: <span class="text-dark">{{ item.product.name }}</span></label>
                                 <select name="size_{{ item.product.id }}" class="form-select form-select-sm border-primary shadow-sm" required>
                                     <option value="">-- Обязательно выберите размер --</option>
-                                    {% for s in item.product.sizes.split(',') %}
-                                        {% if s.strip() %}<option value="{{ s.strip() }}">{{ s.strip() }}</option>{% endif %}
+                                    {% for s in range(36, 50) %}
+                                        <option value="{{ s }}">{{ s }}</option>
                                     {% endfor %}
                                 </select>
                             </div>
@@ -1345,7 +1345,7 @@ def make_order():
             flash('Этот товар сейчас недоступен для заказа.', 'warning')
             return redirect('/')
 
-        sizes = [s.strip() for s in product.sizes.split(',') if s.strip()] if product.sizes else []
+        sizes = list(range(36, 50))
         return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color,
                                       product_id=product.id, sizes=sizes)
     except Exception as e:
