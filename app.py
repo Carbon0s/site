@@ -56,6 +56,79 @@ login_manager.login_view = 'login'
 kream_session = requests.Session()
 
 
+# ================== РАЗДАЧА СТАТИКИ И SEO-ФАЙЛЫ ==================
+@app.route('/image/<path:filename>')
+def custom_static(filename):
+    return send_from_directory(os.path.join(app.root_path, 'image'), filename)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'image'), 'krossmag.png', mimetype='image/png')
+
+
+@app.route('/yandex_86464e3ed56c660d.html')
+def yandex_verification():
+    return '''<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>Verification: 86464e3ed56c660d</body></html>'''
+
+# SEO: ROBOTS.TXT
+@app.route('/robots.txt')
+def robots_txt():
+    rules = (
+        "User-agent: *\n"
+        "Disallow: /admin/\n"
+        "Disallow: /api/\n"
+        "Disallow: /order/\n"
+        "Disallow: /cart\n"
+        "Allow: /\n\n"
+        f"Sitemap: {request.host_url.rstrip('/')}/sitemap.xml"
+    )
+    return Response(rules, mimetype="text/plain")
+
+# SEO: SITEMAP.XML
+@app.route('/sitemap.xml')
+def sitemap():
+    pages = []
+    base_url = request.host_url.rstrip('/')
+    
+    pages.append(f"{base_url}/")
+    for slug in BRAND_SLUGS.keys():
+        pages.append(f"{base_url}/{slug}")
+        
+    products = Product.query.filter((Product.slug != None) & (Product.slug != '')).all()
+    for p in products:
+        pages.append(f"{base_url}/product/{p.slug}")
+        
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for page in pages:
+        xml += f'  <url>\n    <loc>{page}</loc>\n  </url>\n'
+    xml += '</urlset>'
+    
+    return Response(xml, mimetype="application/xml")
+
+
+# Глобальный флаг для безопасного запуска фоновых задач на Render
+app_initialized = False
+
+@app.before_request
+def initialize_app_and_session():
+    global app_initialized
+    if not app_initialized:
+        # Запускаем БД и парсер один раз при первом запросе
+        init_db()
+        threading.Thread(target=background_parser_loop, daemon=True).start()
+        app_initialized = True
+
+    session.permanent = True
+    if 'uid' not in session:
+        session['uid'] = str(uuid.uuid4())
+
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db.session.remove()
+
+
 # ================== КОНСТАНТЫ И СТАТУСЫ ==================
 USD_TO_KRW = 1483.0
 USD_TO_RUB = 77.38
@@ -87,7 +160,7 @@ BRAND_LOGOS = {
     'Lacoste': 'https://i.pinimg.com/originals/88/f3/42/88f3428f492bb1363746f60396570683.png'
 }
 
-# SEO: Генерация slug (ЧПУ) для товаров и брендов
+# SEO SLUGS
 def slugify(text):
     if not text: return "product"
     text = str(text).lower()
@@ -95,79 +168,7 @@ def slugify(text):
     text = re.sub(r'[^a-z0-9]+', '-', text).strip('-')
     return text if text else "product"
 
-BRAND_MAP = {slugify(b): b for b in BRANDS}
-
-
-# ================== РАЗДАЧА СТАТИКИ И SEO-ФАЙЛЫ ==================
-@app.route('/image/<path:filename>')
-def custom_static(filename):
-    return send_from_directory(os.path.join(app.root_path, 'image'), filename)
-
-
-@app.route('/favicon.ico')
-def favicon():
-    return send_from_directory(os.path.join(app.root_path, 'image'), 'krossmag.png', mimetype='image/png')
-
-
-@app.route('/yandex_86464e3ed56c660d.html')
-def yandex_verification():
-    return '''<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>Verification: 86464e3ed56c660d</body></html>'''
-
-# SEO: ROBOTS.TXT
-@app.route('/robots.txt')
-def robots_txt():
-    rules = (
-        "User-agent: *\n"
-        "Disallow: /admin/\n"
-        "Disallow: /api/\n"
-        "Disallow: /order\n"
-        "Disallow: /cart\n"
-        "Allow: /\n\n"
-        f"Sitemap: {request.host_url.rstrip('/')}/sitemap.xml"
-    )
-    return Response(rules, mimetype="text/plain")
-
-# SEO: SITEMAP.XML
-@app.route('/sitemap.xml')
-def sitemap():
-    pages = []
-    base_url = request.host_url.rstrip('/')
-    
-    pages.append(f"{base_url}/")
-    for slug in BRAND_MAP.keys():
-        pages.append(f"{base_url}/{slug}")
-        
-    products = Product.query.filter((Product.slug != None) & (Product.slug != '')).all()
-    for p in products:
-        pages.append(f"{base_url}/product/{p.slug}")
-        
-    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-    for page in pages:
-        xml += f'  <url>\n    <loc>{page}</loc>\n  </url>\n'
-    xml += '</urlset>'
-    
-    return Response(xml, mimetype="application/xml")
-
-
-# Глобальный флаг для безопасного запуска фоновых задач на Render
-app_initialized = False
-
-@app.before_request
-def initialize_app_and_session():
-    global app_initialized
-    if not app_initialized:
-        init_db()
-        threading.Thread(target=background_parser_loop, daemon=True).start()
-        app_initialized = True
-
-    session.permanent = True
-    if 'uid' not in session:
-        session['uid'] = str(uuid.uuid4())
-
-
-@app.teardown_appcontext
-def shutdown_session(exception=None):
-    db.session.remove()
+BRAND_SLUGS = {slugify(b): b for b in BRANDS}
 
 
 # ================== ПАРСЕРЫ И РАСЧЕТЫ ==================
@@ -225,6 +226,7 @@ class User(db.Model, UserMixin):
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
+
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
@@ -232,11 +234,11 @@ class User(db.Model, UserMixin):
 class Product(db.Model):
     __tablename__ = 'products'
     id = db.Column(db.Integer, primary_key=True)
-    slug = db.Column(db.String(255), unique=True, index=True) # SEO SLUG
+    slug = db.Column(db.String(255), unique=True, index=True) # SEO ЧПУ
     name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
     price_url = db.Column(db.String(500), nullable=False)
-    sizes = db.Column(db.String(200))
+    sizes = db.Column(db.String(200)) # Оставлено для БД, но не используется
     color = db.Column(db.String(50))
     brand = db.Column(db.String(50))
     available = db.Column(db.Boolean, default=True)
@@ -363,17 +365,6 @@ def background_parser_loop():
                             p.markup_krw = round(price * MARKUP)
                             if not p.brand: p.brand = found_brand
                             if not p.color: p.color = found_color
-                            
-                            # На всякий случай обновляем slug если его нет
-                            if not p.slug:
-                                base_slug = slugify(p.name)
-                                slg = base_slug
-                                c = 1
-                                while Product.query.filter_by(slug=slg).first():
-                                    slg = f"{base_slug}-{c}"
-                                    c += 1
-                                p.slug = slg
-                            
                             db.session.commit()
                     except Exception:
                         db.session.rollback()
@@ -391,8 +382,8 @@ BASE_HTML = r"""
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     
-    <title>{{ page_title | default("KROSSMAG - Оригинальные Брендовые Кроссовки Донецк") }}</title>
-    <meta name="description" content="{{ meta_description | default('Большой выбор оригинальных кроссовок известных брендов. Доставка по Донецку и ДНР. Гарантия качества.') }}">
+    <title>{{ page_title | default('Купить оригинальные кроссовки Nike, Adidas, New Balance в Донецке — Krossmag') }}</title>
+    <meta name="description" content="{{ meta_description | default('Большой выбор оригинальных брендовых кроссовок (Nike, Adidas, New Balance, Hoka, Asics). Доставка по Донецку и ДНР. Гарантия качества, низкие цены и удобный заказ.') }}">
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="icon" type="image/png" href="/image/krossmag.png">
@@ -423,6 +414,7 @@ BASE_HTML = r"""
         
         .navbar-brand { font-weight: 900; font-size: 1.9rem; letter-spacing: -1px; }
         .main-logo { height: 50px; } 
+        
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
 
         .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-decoration: none;}
@@ -591,7 +583,7 @@ BASE_HTML = r"""
 """
 
 HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
-<h1 class="text-center mb-4 fw-bold fs-2">{{ h1_title | default('Оригинальные брендовые кроссовки с доставкой по Донецку') }}</h1>
+<h1 class="text-center mb-4 fw-bold fs-2">{{ h1_title | default('Оригинальные брендовые кроссовки в Донецке') }}</h1>
 <div class="row mb-4">
     <div class="col-12">
         <form method="GET" class="d-flex gap-2" action="/">
@@ -703,8 +695,8 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 
 <div class="mt-5 p-4 bg-white rounded-4 shadow-sm text-muted small">
-    <h2 class="h5 fw-bold text-dark">Интернет-магазин оригинальных кроссовок в Донецке</h2>
-    <p>Добро пожаловать в Krossmag — ваш надежный магазин оригинальной спортивной обуви. Мы предлагаем большой выбор моделей от мировых брендов: Nike, Adidas, New Balance, Hoka, Lacoste и других. Гарантия 100% оригинальности, автоматический подбор идеального размера (с 36 по 49) и быстрая доставка заказов по Донецку и территории ДНР. Покупайте качественные кроссовки с максимальным комфортом!</p>
+    <h2 class="h5 fw-bold text-dark">Магазин оригинальных кроссовок в Донецке</h2>
+    <p>Добро пожаловать в Krossmag — надежный интернет-магазин оригинальной спортивной обуви. Мы предлагаем огромный выбор моделей от топовых мировых брендов: Nike, Adidas, New Balance, Asics, Hoka и Lacoste. Мы гарантируем 100% оригинальность каждого товара. У нас вы найдете удобный каталог, фиксированные размеры от 36 до 49 и быструю доставку заказов по всему Донецку и территории ДНР. Выбирайте качество, стиль и надежность вместе с Krossmag — оформляйте заказ онлайн по самым выгодным ценам!</p>
 </div>
 
 <script>
@@ -831,13 +823,13 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.slug }}'">
                 <div id="rel_carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                     <div class="carousel-inner">
-                        <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy">{% endif %}</div>
+                        <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}">{% endif %}</div>
                     </div>
                     <a href="/api/fav/add/{{ p.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="В избранное">❤️</a>
                     {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
                 </div>
                 <div class="card-body d-flex flex-column bg-white">
-                    <h5 class="card-title text-truncate-mobile-wrap" title="{{ p.name }}">{{ p.name }}</h5>
+                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
                     <div class="d-flex align-items-center mb-2">
                         <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                         <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -1153,8 +1145,8 @@ def render_catalog(brand_filter=None):
     
     # Базовые SEO теги для главной
     page_title = "Купить оригинальные кроссовки Nike, Adidas, New Balance в Донецке — Krossmag"
-    meta_desc = "Большой выбор оригинальных кроссовок известных брендов. Доставка по Донецку и ДНР. Гарантия качества."
-    h1_title = "Оригинальные брендовые кроссовки с доставкой по Донецку"
+    meta_desc = "Большой выбор оригинальных брендовых кроссовок (Nike, Adidas, New Balance, Hoka, Asics). Доставка по Донецку и ДНР. Гарантия качества, низкие цены и удобный заказ."
+    h1_title = "Оригинальные брендовые кроссовки в Донецке"
 
     # Если мы на странице бренда
     if brand_filter:
@@ -1562,13 +1554,15 @@ class MyAdminIndexView(AdminIndexView):
 
 class ProductAdmin(ModelView):
     column_labels = {
-        'id': 'ID', 'name': 'Название', 'slug': 'URL Slug', 'description': 'Описание', 'price_url': 'Ссылка на цену',
+        'id': 'ID', 'name': 'Название', 'slug': 'URL Slug (Авто)', 'description': 'Описание', 'price_url': 'Ссылка на цену',
         'brand': 'Бренд', 'color': 'Цвет', 'sizes': 'Размеры', 'available': 'В наличии',
         'image': 'Фото 1', 'image2': 'Фото 2', 'image3': 'Фото 3', 'image4': 'Фото 4', 'image5': 'Фото 5',
         'real_rub': 'Себестоимость', 'price_rub': 'Цена продажи', 'profit_rub': 'Прибыль'
     }
 
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
+    
+    # УБРАЛИ ПОЛЕ sizes ИЗ ФОРМЫ (так как размеры 36-49 выдаются всем автоматически)
     form_columns = ['name', 'slug', 'description', 'price_url', 'brand', 'color', 'available', 'image', 'image2',
                     'image3', 'image4', 'image5']
     form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
@@ -1589,7 +1583,7 @@ class ProductAdmin(ModelView):
     # АВТО-ГЕНЕРАЦИЯ SLUG В АДМИНКЕ
     def on_model_change(self, form, model, is_created):
         if not model.slug or is_created:
-            base_slug = slugify(model.name)
+            base_slug = slugify(f"{model.brand} {model.name}")
             slg = base_slug
             c = 1
             while Product.query.filter(Product.slug == slg, Product.id != model.id).first():
@@ -1642,7 +1636,7 @@ def init_db():
                     if 'order_group_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
                 if 'products' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('products')]
-                    # ДОБАВЛЯЕМ КОЛОНКУ SLUG ДЛЯ SEO
+                    # ДОБАВЛЯЕМ КОЛОНКУ SLUG ДЛЯ SEO (если ее еще нет)
                     if 'slug' not in cols: conn.execute(text("ALTER TABLE products ADD COLUMN slug VARCHAR(255)"))
 
             if not User.query.filter_by(username='admin').first():
@@ -1651,33 +1645,34 @@ def init_db():
                 db.session.add(admin_user)
                 db.session.commit()
             
-            # АВТО-ГЕНЕРАЦИЯ SLUG ДЛЯ СТАРЫХ ТОВАРОВ
+            # АВТО-ГЕНЕРАЦИЯ SLUG ДЛЯ СТАРЫХ ТОВАРОВ (Единожды при запуске)
             products_without_slug = Product.query.filter((Product.slug == None) | (Product.slug == '')).all()
             for p in products_without_slug:
-                base_slug = slugify(p.name)
+                base_slug = slugify(f"{p.brand} {p.name}")
                 slg = base_slug
                 c = 1
                 while Product.query.filter_by(slug=slg).first():
                     slg = f"{base_slug}-{c}"
                     c += 1
                 p.slug = slg
-            db.session.commit()
+            if products_without_slug:
+                db.session.commit()
             break
         except Exception:
             time.sleep(2)
 
 
-# SEO: Маршруты для страниц брендов (например /nike)
+# SEO: Маршруты для страниц брендов (например /nike, /hoka)
 @app.route('/<string:brand_slug>')
 def brand_page(brand_slug):
-    if brand_slug not in BRAND_MAP:
-        # Если это не бренд, отменяем и отдаем 404
+    if brand_slug not in BRAND_SLUGS:
         abort(404)
     try:
-        return render_catalog(brand_filter=BRAND_MAP[brand_slug])
+        return render_catalog(brand_filter=BRAND_SLUGS[brand_slug])
     except Exception:
         db.session.rollback()
         return redirect('/')
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
+
