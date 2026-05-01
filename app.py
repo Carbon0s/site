@@ -5,10 +5,11 @@ import time
 import re
 import random
 import uuid
+import unicodedata
 from datetime import datetime
 
 from flask import Flask, render_template_string, request, jsonify, Response, flash, get_flashed_messages, redirect, \
-    url_for, session, send_from_directory
+    url_for, session, send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
@@ -55,51 +56,9 @@ login_manager.login_view = 'login'
 kream_session = requests.Session()
 
 
-# ================== РАЗДАЧА СТАТИКИ И ФАВИКОНКИ ==================
-@app.route('/image/<path:filename>')
-def custom_static(filename):
-    return send_from_directory(os.path.join(app.root_path, 'image'), filename)
-
-
-@app.route('/favicon.ico')
-def favicon():
-    return send_from_directory(os.path.join(app.root_path, 'image'), 'krossmag.png', mimetype='image/png')
-
-
-@app.route('/yandex_86464e3ed56c660d.html')
-def yandex_verification():
-    return '''<html>
-    <head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head>
-    <body>Verification: 86464e3ed56c660d</body>
-</html>'''
-
-
-# Глобальный флаг для безопасного запуска фоновых задач на Render
-app_initialized = False
-
-@app.before_request
-def initialize_app_and_session():
-    global app_initialized
-    if not app_initialized:
-        # Запускаем БД и парсер один раз при первом запросе (защита от зависаний Gunicorn)
-        init_db()
-        threading.Thread(target=background_parser_loop, daemon=True).start()
-        app_initialized = True
-
-    session.permanent = True
-    if 'uid' not in session:
-        session['uid'] = str(uuid.uuid4())
-
-
-@app.teardown_appcontext
-def shutdown_session(exception=None):
-    db.session.remove()
-
-
 # ================== КОНСТАНТЫ И СТАТУСЫ ==================
 USD_TO_KRW = 1483.0
 USD_TO_RUB = 77.38
-# ИЗМЕНЕНА НАЦЕНКА ДО 80% (1.80)
 MARKUP = 1.80
 
 ORDER_STATUSES = [
@@ -127,6 +86,88 @@ BRAND_LOGOS = {
     'Hoka': 'https://shopozz.ru/images/brands_names/hoka.png',
     'Lacoste': 'https://i.pinimg.com/originals/88/f3/42/88f3428f492bb1363746f60396570683.png'
 }
+
+# SEO: Генерация slug (ЧПУ) для товаров и брендов
+def slugify(text):
+    if not text: return "product"
+    text = str(text).lower()
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+    text = re.sub(r'[^a-z0-9]+', '-', text).strip('-')
+    return text if text else "product"
+
+BRAND_MAP = {slugify(b): b for b in BRANDS}
+
+
+# ================== РАЗДАЧА СТАТИКИ И SEO-ФАЙЛЫ ==================
+@app.route('/image/<path:filename>')
+def custom_static(filename):
+    return send_from_directory(os.path.join(app.root_path, 'image'), filename)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'image'), 'krossmag.png', mimetype='image/png')
+
+
+@app.route('/yandex_86464e3ed56c660d.html')
+def yandex_verification():
+    return '''<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>Verification: 86464e3ed56c660d</body></html>'''
+
+# SEO: ROBOTS.TXT
+@app.route('/robots.txt')
+def robots_txt():
+    rules = (
+        "User-agent: *\n"
+        "Disallow: /admin/\n"
+        "Disallow: /api/\n"
+        "Disallow: /order\n"
+        "Disallow: /cart\n"
+        "Allow: /\n\n"
+        f"Sitemap: {request.host_url.rstrip('/')}/sitemap.xml"
+    )
+    return Response(rules, mimetype="text/plain")
+
+# SEO: SITEMAP.XML
+@app.route('/sitemap.xml')
+def sitemap():
+    pages = []
+    base_url = request.host_url.rstrip('/')
+    
+    pages.append(f"{base_url}/")
+    for slug in BRAND_MAP.keys():
+        pages.append(f"{base_url}/{slug}")
+        
+    products = Product.query.filter((Product.slug != None) & (Product.slug != '')).all()
+    for p in products:
+        pages.append(f"{base_url}/product/{p.slug}")
+        
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    for page in pages:
+        xml += f'  <url>\n    <loc>{page}</loc>\n  </url>\n'
+    xml += '</urlset>'
+    
+    return Response(xml, mimetype="application/xml")
+
+
+# Глобальный флаг для безопасного запуска фоновых задач на Render
+app_initialized = False
+
+@app.before_request
+def initialize_app_and_session():
+    global app_initialized
+    if not app_initialized:
+        init_db()
+        threading.Thread(target=background_parser_loop, daemon=True).start()
+        app_initialized = True
+
+    session.permanent = True
+    if 'uid' not in session:
+        session['uid'] = str(uuid.uuid4())
+
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db.session.remove()
 
 
 # ================== ПАРСЕРЫ И РАСЧЕТЫ ==================
@@ -184,7 +225,6 @@ class User(db.Model, UserMixin):
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
-
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
@@ -192,6 +232,7 @@ class User(db.Model, UserMixin):
 class Product(db.Model):
     __tablename__ = 'products'
     id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(255), unique=True, index=True) # SEO SLUG
     name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
     price_url = db.Column(db.String(500), nullable=False)
@@ -322,6 +363,17 @@ def background_parser_loop():
                             p.markup_krw = round(price * MARKUP)
                             if not p.brand: p.brand = found_brand
                             if not p.color: p.color = found_color
+                            
+                            # На всякий случай обновляем slug если его нет
+                            if not p.slug:
+                                base_slug = slugify(p.name)
+                                slg = base_slug
+                                c = 1
+                                while Product.query.filter_by(slug=slg).first():
+                                    slg = f"{base_slug}-{c}"
+                                    c += 1
+                                p.slug = slg
+                            
                             db.session.commit()
                     except Exception:
                         db.session.rollback()
@@ -338,26 +390,22 @@ BASE_HTML = r"""
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>KROSSMAG - Оригинальные Брендовые Кроссовки Донецк</title>
+    
+    <title>{{ page_title | default("KROSSMAG - Оригинальные Брендовые Кроссовки Донецк") }}</title>
+    <meta name="description" content="{{ meta_description | default('Большой выбор оригинальных кроссовок известных брендов. Доставка по Донецку и ДНР. Гарантия качества.') }}">
+    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-
     <link rel="icon" type="image/png" href="/image/krossmag.png">
     <link rel="apple-touch-icon" href="/image/krossmag.png">
 
     <style>
         body { padding-top: 90px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         
-        /* КАРТОЧКА ПК (ВОЗВРАЩЕНА К ОРИГИНАЛЬНОМУ СТИЛЮ) */
+        /* КАРТОЧКА ПК */
         .product-card { 
-            background: #fff; 
-            border: none; 
-            border-radius: 12px; 
-            overflow: hidden; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
-            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); 
-            height: 100%; 
-            display: flex; 
-            flex-direction: column; 
+            background: #fff; border: none; border-radius: 12px; overflow: hidden; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); 
+            height: 100%; display: flex; flex-direction: column; 
         }
         .product-card:hover { transform: translateY(-5px); box-shadow: 0 12px 24px rgba(0,0,0,0.1); }
         .product-card.unavailable { opacity: 0.6; filter: grayscale(50%); cursor: default; }
@@ -375,7 +423,6 @@ BASE_HTML = r"""
         
         .navbar-brand { font-weight: 900; font-size: 1.9rem; letter-spacing: -1px; }
         .main-logo { height: 50px; } 
-        
         .price-main { font-size: 1.4rem; font-weight: bold; color: #111; margin-bottom: 0; }
 
         .mini-btn { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.9); border: 1px solid #eee; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; cursor: pointer; transition: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); text-decoration: none;}
@@ -386,12 +433,6 @@ BASE_HTML = r"""
 
         .btn-share { transition: all 0.3s ease !important; border: 1px solid #dee2e6; }
         .btn-share:hover { background-color: #f8f9fa !important; transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; color: #6c757d; }
-
-        .order-tabs-container { position: relative; display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; gap: 5px; }
-        .status-tab { padding: 12px 20px; cursor: pointer; color: #6c757d; font-weight: 700; text-decoration: none; position: relative; z-index: 1; transition: color 0.3s ease; }
-        .status-tab:hover { color: #343a40; }
-        .status-tab.active { color: #000; }
-        .tab-indicator { position: absolute; bottom: -2px; left: 0; height: 3px; background-color: #343a40; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 3px 3px 0 0; }
 
         .color-circle { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ddd; cursor: pointer; margin: 5px; display: inline-block; transition: 0.2s cubic-bezier(0.25, 0.8, 0.25, 1); box-sizing: border-box; }
         .color-circle:hover { transform: scale(1.1); }
@@ -421,7 +462,7 @@ BASE_HTML = r"""
             .main-logo { height: 40px; margin-right: 8px !important; margin-bottom: 0; } 
             .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 6px !important; }
             
-            /* Карточка товара на мобильных: меньше отступов для сетки 2х2 */
+            /* Сетка 2х2 */
             .product-card { border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
             .product-card .card-body { padding: 10px 8px; }
             .product-card h5 { font-size: 0.85rem; line-height: 1.3; margin-bottom: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; white-space: normal; height: 2.6em; }
@@ -432,23 +473,17 @@ BASE_HTML = r"""
             .card-img-top { height: 140px; } 
             .carousel-item img { height: 140px; }
             
-            /* УМЕНЬШЕННЫЕ КНОПКИ ИЗБРАННОГО И КОРЗИНЫ ДЛЯ ТЕЛЕФОНОВ */
+            /* УМЕНЬШЕННЫЕ КНОПКИ */
             .mini-btn { width: 28px; height: 28px; font-size: 0.8rem; border-width: 0.5px; }
             .mini-btn.fav { top: 8px; right: 8px; }
             .mini-btn.cart { top: 40px; right: 8px; }
-            /* Уменьшаем стрелки перелистывания чтобы не пересекались с кнопками */
             .carousel-control-prev-icon, .carousel-control-next-icon { width: 20px; height: 20px; }
             
-            /* Кнопка "Заказать" на мобильных */
             .order-btn { padding: 0.375rem 0.5rem; font-size: 0.85rem; border-radius: 6px; }
 
             /* Огромные кнопки пагинации на телефоне */
             .mobile-pagination-btn {
-                padding: 15px 25px !important;
-                font-size: 1.1rem !important;
-                font-weight: bold;
-                border-radius: 12px;
-                width: auto;
+                padding: 15px 25px !important; font-size: 1.1rem !important; font-weight: bold; border-radius: 12px; width: auto;
             }
         }
     </style>
@@ -505,17 +540,11 @@ BASE_HTML = r"""
             setTimeout(() => t.remove(), 3000);
         }
 
-        // СКРИПТЫ ДЛЯ КНОПКИ ПОДЕЛИТЬСЯ
         function shareNative(e, title) {
             e.preventDefault();
             if (navigator.share) {
-                navigator.share({
-                    title: title,
-                    url: window.location.href
-                }).catch(console.error);
-            } else {
-                copyLink(e, window.location.href);
-            }
+                navigator.share({ title: title, url: window.location.href }).catch(console.error);
+            } else { copyLink(e, window.location.href); }
         }
         function copyLink(e, url) {
             e.preventDefault();
@@ -534,7 +563,6 @@ BASE_HTML = r"""
 
         document.addEventListener("DOMContentLoaded", function() {
             const lazyImages = Array.from(document.querySelectorAll('img[loading="lazy"]'));
-
             function preloadNext() {
                 if(lazyImages.length === 0) return;
                 const img = lazyImages.shift();
@@ -563,10 +591,10 @@ BASE_HTML = r"""
 """
 
 HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
-<h2 class="text-center mb-4 fw-bold">Оригинальные Брендовые Кроссовки • Донецк</h2>
+<h1 class="text-center mb-4 fw-bold fs-2">{{ h1_title | default('Оригинальные брендовые кроссовки с доставкой по Донецку') }}</h1>
 <div class="row mb-4">
     <div class="col-12">
-        <form method="GET" class="d-flex gap-2">
+        <form method="GET" class="d-flex gap-2" action="/">
             <input type="text" name="search" class="form-control form-control-lg border-0 shadow-sm" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
             <button type="button" class="btn btn-outline-dark btn-lg px-4 hover-lift" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">Фильтры</button>
         </form>
@@ -575,7 +603,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 <div class="collapse mb-4" id="filtersCollapse">
     <div class="card card-body border-0 shadow-sm rounded-4 bg-white">
-        <form method="GET" id="filterForm">
+        <form method="GET" id="filterForm" action="/">
             <input type="hidden" name="search" value="{{ search or '' }}">
             <div class="row">
                 <div class="col-md-12 mb-3">
@@ -615,14 +643,14 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <div class="row" id="products-container">
     {% for p in pagination.items %}
     <div class="col-6 col-md-4 col-lg-3 mb-4">
-        <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
+        <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.slug }}'">
             <div id="carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                 <div class="carousel-inner">
-                    <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="eager">{% endif %}</div>
-                    {% if p.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image2 }}" class="d-block w-100 card-img-top" loading="lazy"></div>{% endif %}
-                    {% if p.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image3 }}" class="d-block w-100 card-img-top" loading="lazy"></div>{% endif %}
-                    {% if p.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image4 }}" class="d-block w-100 card-img-top" loading="lazy"></div>{% endif %}
-                    {% if p.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image5 }}" class="d-block w-100 card-img-top" loading="lazy"></div>{% endif %}
+                    <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="eager" alt="{{ p.name }}">{% endif %}</div>
+                    {% if p.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image2 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
+                    {% if p.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image3 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
+                    {% if p.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image4 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
+                    {% if p.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image5 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
                 </div>
                 {% if p.image2 %}
                 <button class="carousel-control-prev" type="button" data-bs-target="#carousel{{ p.id }}" data-bs-slide="prev" onclick="event.stopPropagation()"><span class="carousel-control-prev-icon"></span></button>
@@ -647,7 +675,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <span class="text-warning fs-6">Загрузка...</span>
                         {% endif %}
                     </p>
-                    <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>
+                    <a href="/order/{{ p.slug }}" class="btn btn-dark w-100 mt-auto fw-bold hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>
                 {% else %}
                     <p class="text-muted fw-bold mb-2">Нет в наличии</p>
                     <button class="btn btn-secondary w-100 mt-auto order-btn" disabled onclick="event.stopPropagation()">Недоступно</button>
@@ -674,6 +702,11 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
     {% endif %}
 </div>
 
+<div class="mt-5 p-4 bg-white rounded-4 shadow-sm text-muted small">
+    <h2 class="h5 fw-bold text-dark">Интернет-магазин оригинальных кроссовок в Донецке</h2>
+    <p>Добро пожаловать в Krossmag — ваш надежный магазин оригинальной спортивной обуви. Мы предлагаем большой выбор моделей от мировых брендов: Nike, Adidas, New Balance, Hoka, Lacoste и других. Гарантия 100% оригинальности, автоматический подбор идеального размера (с 36 по 49) и быстрая доставка заказов по Донецку и территории ДНР. Покупайте качественные кроссовки с максимальным комфортом!</p>
+</div>
+
 <script>
     function toggleColor(color) {
         let input = document.getElementById('selectedColor');
@@ -697,17 +730,40 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 """)
 
 PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org/",
+  "@type": "Product",
+  "name": "{{ product.name }}",
+  "image": "{{ product.image }}",
+  "description": "{{ product.description | default(product.name, true) }}",
+  "brand": {
+    "@type": "Brand",
+    "name": "{{ product.brand }}"
+  }
+  {% if product.available and product.last_krw_price %}
+  ,"offers": {
+    "@type": "Offer",
+    "url": "{{ request.url }}",
+    "priceCurrency": "RUB",
+    "price": "{{ ((product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }}",
+    "availability": "https://schema.org/InStock"
+  }
+  {% endif %}
+}
+</script>
+
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
 <div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-5">
     <div class="row g-0">
         <div class="col-md-6 bg-white d-flex align-items-center justify-content-center p-4 position-relative">
             <div id="bigCarousel" class="carousel slide w-100" data-bs-interval="false">
                 <div class="carousel-inner">
-                    <div class="carousel-item active">{% if product.image %}<img src="/proxy_image?url={{ product.image }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="eager">{% endif %}</div>
-                    {% if product.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image2 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy"></div>{% endif %}
-                    {% if product.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image3 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy"></div>{% endif %}
-                    {% if product.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image4 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy"></div>{% endif %}
-                    {% if product.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image5 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy"></div>{% endif %}
+                    <div class="carousel-item active">{% if product.image %}<img src="/proxy_image?url={{ product.image }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="eager" alt="{{ product.name }}">{% endif %}</div>
+                    {% if product.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image2 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
+                    {% if product.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image3 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
+                    {% if product.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image4 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
+                    {% if product.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image5 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
                 </div>
                 {% if product.image2 %}
                 <button class="carousel-control-prev" type="button" data-bs-target="#bigCarousel" data-bs-slide="prev"><span class="carousel-control-prev-icon" style="filter:invert(1)"></span></button>
@@ -717,14 +773,13 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             {% if not product.available %}<div class="position-absolute top-50 start-50 translate-middle bg-dark text-white px-4 py-2 rounded-3 fs-4 fw-bold opacity-75">Нет в наличии</div>{% endif %}
         </div>
 
-        <div class="col-md-6 p-5 bg-light">
-            <h2 class="fw-bold mb-2">{{ product.name }}</h2>
-            <div class="d-flex align-items-center mb-4 fs-5 text-muted">
+        <div class="col-md-6 p-5 bg-white">
+            <h1 class="fw-bold mb-2 fs-2">{{ product.name }}</h1> <div class="d-flex align-items-center mb-4 fs-5 text-muted">
                 <span class="me-3 d-flex align-items-center"><img src="{{ BRAND_LOGOS.get(product.brand) }}" class="brand-logo-mini" style="width:24px; height:24px;"> <strong>{{ product.brand }}</strong></span>
                 <span class="d-flex align-items-center"><strong>Цвет:</strong> <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div></span>
             </div>
 
-            <div class="my-4 p-4 bg-white rounded-4 shadow-sm">
+            <div class="my-4 p-4 bg-light rounded-4 border-0">
                 {% if product.available %}
                     <p id="price-{{ product.id }}" class="fs-1 fw-bold text-dark mb-0">
                         {% if product.last_krw_price and product.last_krw_price > 10000 %}
@@ -749,17 +804,17 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border shadow-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false">🔗 Поделиться</button>
                     <ul class="dropdown-menu w-100 shadow border-0 rounded-3">
                         <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ product.name|replace("'", "\\'") }}')">📲 Поделиться</a></li>
-                        <li class="d-block d-md-none"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.id }}')">🔗 Скопировать ссылку</a></li>
+                        <li class="d-block d-md-none"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.slug }}')">🔗 Скопировать ссылку</a></li>
                         
-                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.id }}&text=Смотри, что я нашел в KROSSMAG: {{ product.name }}">✈️ Telegram</a></li>
-                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://api.whatsapp.com/send?text=Смотри, что я нашел в KROSSMAG: {{ product.name }} - {{ request.host_url }}product/{{ product.id }}">🟢 WhatsApp</a></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.slug }}&text=Смотри, что я нашел в KROSSMAG: {{ product.name }}">✈️ Telegram</a></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://api.whatsapp.com/send?text=Смотри, что я нашел в KROSSMAG: {{ product.name }} - {{ request.host_url }}product/{{ product.slug }}">🟢 WhatsApp</a></li>
                         <li class="d-none d-md-block"><hr class="dropdown-divider"></li>
-                        <li class="d-none d-md-block"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.id }}')">🔗 Скопировать ссылку</a></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.slug }}')">🔗 Скопировать ссылку</a></li>
                     </ul>
                 </div>
             </div>
             {% if product.available %}
-                <a href="/order?product_id={{ product.id }}" class="btn btn-dark hover-lift btn-lg w-100 fw-bold py-3 shadow">Оформить заказ в Донецк</a>
+                <a href="/order/{{ product.slug }}" class="btn btn-dark hover-lift btn-lg w-100 fw-bold py-3 shadow">Оформить заказ в Донецк</a>
             {% else %}
                 <button class="btn btn-secondary btn-lg w-100 fw-bold py-3 shadow" disabled>Оформить невозможно</button>
             {% endif %}
@@ -773,7 +828,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
     <div class="row">
         {% for p in related %}
         <div class="col-6 col-md-4 col-lg-3 mb-4">
-            <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.id }}'">
+            <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.slug }}'">
                 <div id="rel_carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                     <div class="carousel-inner">
                         <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy">{% endif %}</div>
@@ -782,7 +837,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
                 </div>
                 <div class="card-body d-flex flex-column bg-white">
-                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                    <h5 class="card-title text-truncate-mobile-wrap" title="{{ p.name }}">{{ p.name }}</h5>
                     <div class="d-flex align-items-center mb-2">
                         <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                         <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -796,10 +851,10 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                                 <span class="text-warning fs-6">Загрузка...</span>
                             {% endif %}
                         </p>
-                        <a href="/order?product_id={{ p.id }}" class="btn btn-dark w-100 mt-auto fw-bold hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>
+                        <a href="/order/{{ p.slug }}" class="btn btn-dark btn-sm w-100 mt-auto fw-bold hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>
                     {% else %}
                         <p class="text-muted fw-bold mb-2">Нет в наличии</p>
-                        <button class="btn btn-secondary w-100 mt-auto order-btn" disabled onclick="event.stopPropagation()">Недоступно</button>
+                        <button class="btn btn-secondary btn-sm w-100 mt-auto order-btn" disabled onclick="event.stopPropagation()">Недоступно</button>
                     {% endif %}
                 </div>
             </div>
@@ -819,7 +874,7 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <div class="row">
     {% for f in favorites %}
     <div class="col-6 col-md-4 col-lg-3 mb-4">
-        <div class="product-card {% if not f.product.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ f.product.id }}'">
+        <div class="product-card {% if not f.product.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ f.product.slug }}'">
             <div class="card-img-wrapper">
                 <img src="/proxy_image?url={{ f.product.image }}" class="card-img-top w-100">
                 <a href="/api/fav/remove/{{ f.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="Убрать">❌</a>
@@ -831,7 +886,7 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                         {{ ((f.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
                     {% else %}Загрузка...{% endif %}
                 </p>
-                {% if f.product.available %}<a href="/order?product_id={{ f.product.id }}" class="btn btn-dark w-100 mt-auto hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>{% endif %}
+                {% if f.product.available %}<a href="/order/{{ f.product.slug }}" class="btn btn-dark btn-sm mt-auto hover-lift order-btn" onclick="event.stopPropagation()">Заказать</a>{% endif %}
             </div>
         </div>
     </div>
@@ -848,7 +903,7 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <div class="row">
     <div class="col-md-8">
         {% for c in cart_items %}
-        <div class="card mb-3 shadow-sm border-0 rounded-4" onclick="window.location.href='/product/{{ c.product.id }}'" style="cursor:pointer; transition: transform 0.2s;">
+        <div class="card mb-3 shadow-sm border-0 rounded-4" onclick="window.location.href='/product/{{ c.product.slug }}'" style="cursor:pointer; transition: transform 0.2s;">
             <div class="row g-0">
                 <div class="col-4 col-md-3 bg-white p-2 d-flex align-items-center justify-content-center" style="border-radius: 16px 0 0 16px;">
                     <img src="/proxy_image?url={{ c.product.image }}" class="img-fluid rounded" style="max-height:120px;">
@@ -1016,6 +1071,7 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                             <div class="w-100 overflow-hidden">
                                 <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{{ o.product_name }}</h6>
                                 <p class="text-muted small mb-0">Размер: {{ o.size }} | {{ o.date.strftime('%d.%m.%Y') }} {% if o.order_group_id %}(Заказ №{{ o.order_group_id }}){% endif %}</p>
+                                {% if o.product %}<a href="/product/{{ o.product.slug }}" class="small text-decoration-none">Перейти к товару</a>{% endif %}
                             </div>
                         </div>
                         <div class="mt-auto p-3 rounded-3" style="background-color: #f1f3f5;">
@@ -1083,47 +1139,60 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 
 # ================== РОУТЫ ПРИЛОЖЕНИЯ ==================
+
+def render_catalog(brand_filter=None):
+    session['last_query'] = request.query_string.decode('utf-8')
+    search = request.args.get('search', '').strip()
+    colors = request.args.get('color', '')
+    brands_arg = request.args.get('brand', '')
+    min_p = request.args.get('min_p', type=int)
+    max_p = request.args.get('max_p', type=int)
+    page = request.args.get('page', 1, type=int)
+
+    query = Product.query
+    
+    # Базовые SEO теги для главной
+    page_title = "Купить оригинальные кроссовки Nike, Adidas, New Balance в Донецке — Krossmag"
+    meta_desc = "Большой выбор оригинальных кроссовок известных брендов. Доставка по Донецку и ДНР. Гарантия качества."
+    h1_title = "Оригинальные брендовые кроссовки с доставкой по Донецку"
+
+    # Если мы на странице бренда
+    if brand_filter:
+        query = query.filter(Product.brand == brand_filter)
+        page_title = f"Купить кроссовки {brand_filter} в Донецке — оригинальные модели | Krossmag"
+        h1_title = f"Кроссовки {brand_filter}"
+        meta_desc = f"Заказывайте оригинальные кроссовки {brand_filter} с доставкой по Донецку и ДНР. 100% оригинал, лучшие цены."
+
+    if search: query = query.filter(Product.name.ilike(f'%{search}%'))
+
+    color_list = [c for c in colors.split(',') if c]
+    if color_list: query = query.filter(Product.color.in_(color_list))
+
+    brand_list = [b for b in brands_arg.split(',') if b]
+    if brand_list: query = query.filter(Product.brand.in_(brand_list))
+
+    if min_p or max_p:
+        krw_factor = USD_TO_KRW / (USD_TO_RUB * MARKUP)
+        if min_p: query = query.filter(Product.last_krw_price >= min_p * krw_factor)
+        if max_p: query = query.filter(Product.last_krw_price <= max_p * krw_factor)
+
+    pagination = query.order_by(Product.id.desc()).paginate(page=page, per_page=30, error_out=False)
+
+    return render_template_string(
+        HOME_HTML,
+        pagination=pagination, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS,
+        search=search, selected_colors=color_list, selected_colors_str=colors,
+        selected_brands=brand_list, selected_brands_str=brands_arg,
+        min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True),
+        USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP,
+        page_title=page_title, meta_description=meta_desc, h1_title=h1_title
+    )
+
+
 @app.route('/')
 def index():
     try:
-        session['last_query'] = request.query_string.decode('utf-8')
-        search = request.args.get('search', '').strip()
-        colors = request.args.get('color', '')
-        brands = request.args.get('brand', '')
-        min_p = request.args.get('min_p', type=int)
-        max_p = request.args.get('max_p', type=int)
-        page = request.args.get('page', 1, type=int)
-
-        query = Product.query
-        if search: query = query.filter(Product.name.ilike(f'%{search}%'))
-
-        color_list = [c for c in colors.split(',') if c]
-        if color_list: query = query.filter(Product.color.in_(color_list))
-
-        brand_list = [b for b in brands.split(',') if b]
-        if brand_list: query = query.filter(Product.brand.in_(brand_list))
-
-        # Перевод рублей в воны для базы данных (чтобы корректно работала пагинация)
-        if min_p or max_p:
-            krw_factor = USD_TO_KRW / (USD_TO_RUB * MARKUP)
-            if min_p:
-                min_krw = min_p * krw_factor
-                query = query.filter(Product.last_krw_price >= min_krw)
-            if max_p:
-                max_krw = max_p * krw_factor
-                query = query.filter(Product.last_krw_price <= max_krw)
-
-        # Вытягиваем из базы только 30 товаров
-        pagination = query.order_by(Product.id.desc()).paginate(page=page, per_page=30, error_out=False)
-
-        return render_template_string(
-            HOME_HTML,
-            pagination=pagination, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS,
-            search=search, selected_colors=color_list, selected_colors_str=colors,
-            selected_brands=brand_list, selected_brands_str=brands,
-            min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True),
-            USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP
-        )
+        return render_catalog()
     except exc.OperationalError:
         db.session.rollback()
         return "Ошибка соединения с базой. Обновите страницу через пару секунд.", 503
@@ -1132,37 +1201,37 @@ def index():
         return f"Внутренняя ошибка сервера: {e}", 500
 
 
-@app.route('/product/<int:product_id>')
-def product_detail(product_id):
+@app.route('/product/<string:product_slug>')
+def product_detail(product_slug):
     try:
-        product = Product.query.get_or_404(product_id)
+        product = Product.query.filter_by(slug=product_slug).first_or_404()
         
-        # Логика для блока "Возможно вам также понравится"
+        # SEO: Мета теги карточки товара
+        page_title = f"{product.name} {product.brand} купить в Донецке"
+        meta_desc = f"Заказать {product.name} от бренда {product.brand}. Оригинал, лучшие цены, доставка по Донецку."
+
         base_price = get_display_price(product.last_krw_price)
         base_rub = base_price['rub'] if base_price else 0
 
-        # Берем все товары того же бренда, исключая текущий
         all_brand_products = Product.query.filter(Product.brand == product.brand, Product.id != product.id).all()
         related_candidates = []
 
         for p in all_brand_products:
             if not p.available: continue
             p_price = get_display_price(p.last_krw_price)
-            
             if p_price and base_rub:
-                # Проверяем разброс +- 2000 рублей
                 if abs(p_price['rub'] - base_rub) <= 2000:
                     related_candidates.append(p)
             elif not base_rub:
                 related_candidates.append(p)
 
         random.shuffle(related_candidates)
-        related = related_candidates[:10]  # Берем 10 случайных
+        related = related_candidates[:10]
 
         return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS,
                                       BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
-                                      MARKUP=MARKUP)
-    except Exception:
+                                      MARKUP=MARKUP, page_title=page_title, meta_description=meta_desc)
+    except exc.OperationalError:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
 
@@ -1195,8 +1264,9 @@ def proxy_image():
 def favorites():
     try:
         favs = FavoriteItem.query.filter_by(session_id=session['uid']).all()
+        page_title = "Моё избранное | Krossmag"
         return render_template_string(FAVORITES_HTML, favorites=favs, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
-                                      MARKUP=MARKUP)
+                                      MARKUP=MARKUP, page_title=page_title)
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
@@ -1208,8 +1278,9 @@ def cart():
         items = CartItem.query.filter_by(session_id=session['uid']).all()
         total_rub = sum([get_display_price(i.product.last_krw_price)['rub'] for i in items if
                          i.product.last_krw_price > 10000]) if items else 0
+        page_title = "Корзина | Krossmag"
         return render_template_string(CART_HTML, cart_items=items, total_rub=f"{total_rub:,}".replace(',', ' '),
-                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP, page_title=page_title)
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
@@ -1297,11 +1368,12 @@ def clear_cart():
         return redirect('/cart')
 
 
-@app.route('/order', methods=['GET', 'POST'])
-def make_order():
+@app.route('/order/<string:product_slug>', methods=['GET', 'POST'])
+def make_order(product_slug):
     try:
+        product = Product.query.filter_by(slug=product_slug).first_or_404()
+        
         if request.method == 'POST':
-            product = Product.query.get_or_404(int(request.form['product_id']))
             if not product.available:
                 flash('К сожалению, этот товар сейчас недоступен.', 'danger')
                 return redirect('/')
@@ -1338,16 +1410,14 @@ def make_order():
             db.session.commit()
             return redirect(url_for('thanks'))
 
-        product_id = request.args.get('product_id')
-        if not product_id: return redirect('/')
-        product = Product.query.get_or_404(int(product_id))
         if not product.available:
             flash('Этот товар сейчас недоступен для заказа.', 'warning')
             return redirect('/')
 
         sizes = list(range(36, 50))
+        page_title = f"Оформление заказа: {product.name}"
         return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color,
-                                      product_id=product.id, sizes=sizes)
+                                      product_id=product.id, sizes=sizes, page_title=page_title)
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка: {str(e)}', 'danger')
@@ -1404,8 +1474,9 @@ def order_cart():
             db.session.commit()
             return redirect(url_for('thanks'))
 
+        page_title = "Оформление корзины"
         return render_template_string(ORDER_CART_HTML, items=valid_items, total_rub=f"{total_rub:,}".replace(',', ' '),
-                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP)
+                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP, page_title=page_title)
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка оформления: {str(e)}', 'danger')
@@ -1413,7 +1484,7 @@ def order_cart():
 
 
 @app.route('/thanks')
-def thanks(): return render_template_string(THANKS_HTML)
+def thanks(): return render_template_string(THANKS_HTML, page_title="Спасибо за заказ!")
 
 
 # ================== АВТОРИЗАЦИЯ И РЕГИСТРАЦИЯ ==================
@@ -1434,7 +1505,7 @@ def register():
                 login_user(new_user)
                 flash('Вы успешно зарегистрировались!', 'success')
                 return redirect('/')
-        return render_template_string(REGISTER_HTML, messages=get_flashed_messages(with_categories=True))
+        return render_template_string(REGISTER_HTML, messages=get_flashed_messages(with_categories=True), page_title="Регистрация")
     except Exception:
         db.session.rollback()
         return "Ошибка регистрации. Попробуйте еще раз.", 500
@@ -1452,7 +1523,7 @@ def login():
                 if getattr(user, 'is_admin', False): return redirect('/admin')
                 return redirect('/')
             flash('Неверные данные', 'danger')
-        return render_template_string(LOGIN_HTML, messages=get_flashed_messages(with_categories=True))
+        return render_template_string(LOGIN_HTML, messages=get_flashed_messages(with_categories=True), page_title="Вход")
     except Exception:
         db.session.rollback()
         return "Ошибка БД. Обновите страницу.", 503
@@ -1473,7 +1544,8 @@ def my_orders():
         orders = Order.query.filter_by(user_id=current_user.id).order_by(Order.date.desc()).all()
         active_orders = [o for o in orders if o.status != 'Заказ Доставлен']
         delivered_orders = [o for o in orders if o.status == 'Заказ Доставлен']
-        return render_template_string(MY_ORDERS_HTML, active_orders=active_orders, delivered_orders=delivered_orders)
+        page_title = "Мои заказы"
+        return render_template_string(MY_ORDERS_HTML, active_orders=active_orders, delivered_orders=delivered_orders, page_title=page_title)
     except Exception:
         db.session.rollback()
         return "Ошибка загрузки заказов", 500
@@ -1490,31 +1562,40 @@ class MyAdminIndexView(AdminIndexView):
 
 class ProductAdmin(ModelView):
     column_labels = {
-        'id': 'ID', 'name': 'Название', 'description': 'Описание', 'price_url': 'Ссылка на цену',
+        'id': 'ID', 'name': 'Название', 'slug': 'URL Slug', 'description': 'Описание', 'price_url': 'Ссылка на цену',
         'brand': 'Бренд', 'color': 'Цвет', 'sizes': 'Размеры', 'available': 'В наличии',
         'image': 'Фото 1', 'image2': 'Фото 2', 'image3': 'Фото 3', 'image4': 'Фото 4', 'image5': 'Фото 5',
         'real_rub': 'Себестоимость', 'price_rub': 'Цена продажи', 'profit_rub': 'Прибыль'
     }
 
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
-    form_columns = ['name', 'description', 'price_url', 'brand', 'color', 'sizes', 'available', 'image', 'image2',
+    form_columns = ['name', 'slug', 'description', 'price_url', 'brand', 'color', 'available', 'image', 'image2',
                     'image3', 'image4', 'image5']
     form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
 
     def real_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
         m, 'last_krw_price', 0) > 10000 else '-'
 
-    def price_rub(v, c, m,
-                  n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(
+    def price_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10:,} ₽" if getattr(
         m, 'last_krw_price', 0) > 10000 else '-'
 
-    def profit_rub(v, c, m,
-                   n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
+    def profit_rub(v, c, m, n): return f"{round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10) * 10 - round((m.last_krw_price / USD_TO_KRW * USD_TO_RUB) / 10) * 10:,} ₽" if getattr(
         m, 'last_krw_price', 0) > 10000 else '-'
 
     column_formatters = {'real_rub': real_rub, 'price_rub': price_rub, 'profit_rub': profit_rub}
 
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
+
+    # АВТО-ГЕНЕРАЦИЯ SLUG В АДМИНКЕ
+    def on_model_change(self, form, model, is_created):
+        if not model.slug or is_created:
+            base_slug = slugify(model.name)
+            slg = base_slug
+            c = 1
+            while Product.query.filter(Product.slug == slg, Product.id != model.id).first():
+                slg = f"{base_slug}-{c}"
+                c += 1
+            model.slug = slg
 
 
 class OrderAdmin(ModelView):
@@ -1552,30 +1633,51 @@ def init_db():
             with db.engine.begin() as conn:
                 if 'users' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('users')]
-                    if 'first_name' not in cols: conn.execute(
-                        text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
-                    if 'last_name' not in cols: conn.execute(
-                        text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
+                    if 'first_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN first_name VARCHAR(100)"))
+                    if 'last_name' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN last_name VARCHAR(100)"))
                     if 'phone' not in cols: conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(30)"))
                 if 'orders' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('orders')]
-                    if 'user_id' not in cols: conn.execute(
-                        text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
-                    if 'order_group_id' not in cols: conn.execute(
-                        text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
+                    if 'user_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+                    if 'order_group_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
+                if 'products' in inspector.get_table_names():
+                    cols = [c['name'] for c in inspector.get_columns('products')]
+                    # ДОБАВЛЯЕМ КОЛОНКУ SLUG ДЛЯ SEO
+                    if 'slug' not in cols: conn.execute(text("ALTER TABLE products ADD COLUMN slug VARCHAR(255)"))
 
             if not User.query.filter_by(username='admin').first():
                 admin_user = User(username='admin', is_admin=True)
                 admin_user.set_password('78957895kross')
                 db.session.add(admin_user)
                 db.session.commit()
+            
+            # АВТО-ГЕНЕРАЦИЯ SLUG ДЛЯ СТАРЫХ ТОВАРОВ
+            products_without_slug = Product.query.filter((Product.slug == None) | (Product.slug == '')).all()
+            for p in products_without_slug:
+                base_slug = slugify(p.name)
+                slg = base_slug
+                c = 1
+                while Product.query.filter_by(slug=slg).first():
+                    slg = f"{base_slug}-{c}"
+                    c += 1
+                p.slug = slg
+            db.session.commit()
             break
         except Exception:
             time.sleep(2)
 
 
-# Убрали if __name__ == '__main__': для безопасного запуска на Render
-# Логика запуска перенесена в функцию initialize_app_and_session (декоратор @app.before_request)
+# SEO: Маршруты для страниц брендов (например /nike)
+@app.route('/<string:brand_slug>')
+def brand_page(brand_slug):
+    if brand_slug not in BRAND_MAP:
+        # Если это не бренд, отменяем и отдаем 404
+        abort(404)
+    try:
+        return render_catalog(brand_filter=BRAND_MAP[brand_slug])
+    except Exception:
+        db.session.rollback()
+        return redirect('/')
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
