@@ -90,7 +90,7 @@ def robots_txt():
 def sitemap():
     pages = []
     base_url = request.host_url.rstrip('/')
-    
+  
     pages.append(f"{base_url}/")
     for slug in BRAND_SLUGS.keys():
         pages.append(f"{base_url}/{slug}")
@@ -102,6 +102,7 @@ def sitemap():
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
     for page in pages:
         xml += f'  <url>\n    <loc>{page}</loc>\n  </url>\n'
+  
     xml += '</urlset>'
     
     return Response(xml, mimetype="application/xml")
@@ -114,7 +115,6 @@ app_initialized = False
 def initialize_app_and_session():
     global app_initialized
     if not app_initialized:
-        # Запускаем БД и парсер один раз при первом запросе
         init_db()
         threading.Thread(target=background_parser_loop, daemon=True).start()
         app_initialized = True
@@ -169,6 +169,7 @@ def slugify(text):
     return text if text else "product"
 
 BRAND_SLUGS = {slugify(b): b for b in BRANDS}
+BRAND_SLUGS_INV = {b: slugify(b) for b in BRANDS}
 
 
 # ================== ПАРСЕРЫ И РАСЧЕТЫ ==================
@@ -351,7 +352,7 @@ def background_parser_loop():
                                       '베이지': 'beige', '네이비': 'navy', '브라운': 'brown', '민트': 'mint', '버건디': 'burgundy'}
                         for kor, eng in kor_colors.items():
                             if kor in title or eng in title:
-                                found_color = eng;
+                                found_color = eng
                                 break
             except Exception:
                 pass
@@ -382,8 +383,8 @@ BASE_HTML = r"""
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     
-    <title>{{ page_title | default('Купить оригинальные кроссовки Nike, Adidas, New Balance в Донецке — Krossmag') }}</title>
-    <meta name="description" content="{{ meta_description | default('Большой выбор оригинальных брендовых кроссовок (Nike, Adidas, New Balance, Hoka, Asics). Доставка по Донецку и ДНР. Гарантия качества, низкие цены и удобный заказ.') }}">
+    <title>{{ page_title | default('KROSSMAG - Оригинальные кроссовки в Донецке') }}</title>
+    <meta name="description" content="{{ meta_description | default('Купить оригинальные кроссовки Nike, Adidas, New Balance, Hoka и другие бренды в Донецке. Гарантия оригинальности, доставка по городу и ДНР, размеры 36-49. Быстрый заказ онлайн по выгодным ценам.') }}">
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="icon" type="image/png" href="/image/krossmag.png">
@@ -474,9 +475,7 @@ BASE_HTML = r"""
             .order-btn { padding: 0.375rem 0.5rem; font-size: 0.85rem; border-radius: 6px; }
 
             /* Огромные кнопки пагинации на телефоне */
-            .mobile-pagination-btn {
-                padding: 15px 25px !important; font-size: 1.1rem !important; font-weight: bold; border-radius: 12px; width: auto;
-            }
+            .mobile-pagination-btn { padding: 15px 25px !important; font-size: 1.1rem !important; font-weight: bold; border-radius: 12px; width: auto; }
         }
     </style>
 </head>
@@ -486,6 +485,7 @@ BASE_HTML = r"""
             <a class="navbar-brand d-flex align-items-center hover-lift" href="/">
                 <img src="https://i.postimg.cc/wy0jWDdm/logo.png" alt="Logo" class="main-logo">KROSSMAG
             </a>
+            
             <div class="ms-auto d-flex align-items-center gap-3">
                 <a href="/favorites" class="text-white text-decoration-none icon-btn" title="Избранное">
                     <img src="https://images.icon-icons.com/903/PNG/512/bookmark_icon-icons.com_69556.png">
@@ -552,7 +552,6 @@ BASE_HTML = r"""
             }).catch(err => console.log("Ожидание цен..."));
         }
         setInterval(updatePrices, 10000);
-
         document.addEventListener("DOMContentLoaded", function() {
             const lazyImages = Array.from(document.querySelectorAll('img[loading="lazy"]'));
             function preloadNext() {
@@ -586,7 +585,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <h1 class="text-center mb-4 fw-bold fs-2">{{ h1_title | default('Оригинальные брендовые кроссовки в Донецке') }}</h1>
 <div class="row mb-4">
     <div class="col-12">
-        <form method="GET" class="d-flex gap-2" action="/">
+        <form method="GET" class="d-flex gap-2" action="{{ request.path }}">
             <input type="text" name="search" class="form-control form-control-lg border-0 shadow-sm" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
             <button type="button" class="btn btn-outline-dark btn-lg px-4 hover-lift" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">Фильтры</button>
         </form>
@@ -595,19 +594,18 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 <div class="collapse mb-4" id="filtersCollapse">
     <div class="card card-body border-0 shadow-sm rounded-4 bg-white">
-        <form method="GET" id="filterForm" action="/">
+        <form method="GET" id="filterForm" action="{{ request.path }}">
             <input type="hidden" name="search" value="{{ search or '' }}">
             <div class="row">
                 <div class="col-md-12 mb-3">
                     <label class="form-label fw-bold">Бренды</label>
                     <div class="d-flex flex-wrap gap-2">
                         {% for b in BRANDS %}
-                            <div onclick="toggleBrand('{{ b }}')" class="brand-pill {% if b in selected_brands %}selected{% endif %}" data-brand="{{ b }}">
+                            <div onclick="toggleBrandURL('{{ BRAND_SLUGS_INV[b] }}', '{{ b == current_brand }}')" class="brand-pill {% if b == current_brand %}selected{% endif %}" data-brand="{{ b }}" style="cursor:pointer;">
                                 <img src="{{ BRAND_LOGOS[b] }}" class="brand-logo-mini" style="width: 20px; height: 20px;">{{ b }}
                             </div>
                         {% endfor %}
                     </div>
-                    <input type="hidden" name="brand" id="selectedBrands" value="{{ selected_brands_str }}">
                 </div>
                 <div class="col-md-8 mb-3">
                     <label class="form-label fw-bold">Цвета</label>
@@ -627,7 +625,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 </div>
             </div>
             <button type="submit" class="btn btn-dark mt-2 px-4 hover-lift">Показать</button>
-            <a href="/" class="btn btn-link mt-2 text-muted">Сбросить</a>
+            <a href="{{ request.path }}" class="btn btn-link mt-2 text-muted">Сбросить</a>
         </form>
     </div>
 </div>
@@ -680,7 +678,9 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 <div class="d-flex flex-wrap justify-content-center align-items-center mt-4 mb-5 gap-3">
     {% if pagination.has_prev %}
-        <a href="{{ url_for('index', page=pagination.prev_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow hover-lift">
+        {% set args = request.args.copy() %}
+        {% set _ = args.update({'page': pagination.prev_num}) %}
+        <a href="{{ request.path }}?{{ args.urlencode() }}" class="btn btn-dark mobile-pagination-btn shadow hover-lift">
             ⬅ Назад
         </a>
     {% endif %}
@@ -688,7 +688,9 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
     <span class="fw-bold fs-5 text-muted px-3">Страница {{ pagination.page }} из {{ pagination.pages }}</span>
 
     {% if pagination.has_next %}
-        <a href="{{ url_for('index', page=pagination.next_num, search=search, color=selected_colors_str, brand=selected_brands_str, min_p=min_p, max_p=max_p) }}" class="btn btn-dark mobile-pagination-btn shadow hover-lift">
+        {% set args = request.args.copy() %}
+        {% set _ = args.update({'page': pagination.next_num}) %}
+        <a href="{{ request.path }}?{{ args.urlencode() }}" class="btn btn-dark mobile-pagination-btn shadow hover-lift">
             Дальше ➡
         </a>
     {% endif %}
@@ -700,6 +702,16 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 
 <script>
+    function toggleBrandURL(slug, isSelected) {
+        let params = new URLSearchParams(window.location.search);
+        params.delete('page'); // сбрасываем страницу при смене бренда
+        if (isSelected === 'True') {
+            window.location.href = '/' + (params.toString() ? '?' + params.toString() : '');
+        } else {
+            window.location.href = '/' + slug + (params.toString() ? '?' + params.toString() : '');
+        }
+    }
+
     function toggleColor(color) {
         let input = document.getElementById('selectedColor');
         let colors = input.value ? input.value.split(',') : [];
@@ -709,41 +721,11 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         else { colors.push(color); el.classList.add('selected'); }
         input.value = colors.join(',');
     }
-    function toggleBrand(brand) {
-        let input = document.getElementById('selectedBrands');
-        let brands = input.value ? input.value.split(',') : [];
-        let idx = brands.indexOf(brand);
-        let el = document.querySelector(`.brand-pill[data-brand='${brand}']`);
-        if (idx > -1) { brands.splice(idx, 1); el.classList.remove('selected'); } 
-        else { brands.push(brand); el.classList.add('selected'); }
-        input.value = brands.join(',');
-    }
 </script>
 """)
 
 PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org/",
-  "@type": "Product",
-  "name": "{{ product.name }}",
-  "image": "{{ product.image }}",
-  "description": "{{ product.description | default(product.name, true) }}",
-  "brand": {
-    "@type": "Brand",
-    "name": "{{ product.brand }}"
-  }
-  {% if product.available and product.last_krw_price %}
-  ,"offers": {
-    "@type": "Offer",
-    "url": "{{ request.url }}",
-    "priceCurrency": "RUB",
-    "price": "{{ ((product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }}",
-    "availability": "https://schema.org/InStock"
-  }
-  {% endif %}
-}
-</script>
+{{ schema_script | safe }}
 
 <a href="/?{{ session.get('last_query', '') }}" class="back-btn">← Назад на главную</a>
 <div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-5">
@@ -766,7 +748,8 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
 
         <div class="col-md-6 p-5 bg-white">
-            <h1 class="fw-bold mb-2 fs-2">{{ product.name }}</h1> <div class="d-flex align-items-center mb-4 fs-5 text-muted">
+            <h1 class="fw-bold mb-2 fs-2">{{ product.name }}</h1> 
+            <div class="d-flex align-items-center mb-4 fs-5 text-muted">
                 <span class="me-3 d-flex align-items-center"><img src="{{ BRAND_LOGOS.get(product.brand) }}" class="brand-logo-mini" style="width:24px; height:24px;"> <strong>{{ product.brand }}</strong></span>
                 <span class="d-flex align-items-center"><strong>Цвет:</strong> <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div></span>
             </div>
@@ -1144,14 +1127,14 @@ def render_catalog(brand_filter=None):
     query = Product.query
     
     # Базовые SEO теги для главной
-    page_title = "Купить оригинальные кроссовки Nike, Adidas, New Balance в Донецке — Krossmag"
-    meta_desc = "Большой выбор оригинальных брендовых кроссовок (Nike, Adidas, New Balance, Hoka, Asics). Доставка по Донецку и ДНР. Гарантия качества, низкие цены и удобный заказ."
+    page_title = "KROSSMAG - Оригинальные кроссовки в Донецке"
+    meta_desc = "Купить оригинальные кроссовки Nike, Adidas, New Balance, Hoka и другие бренды в Донецке. Гарантия оригинальности, доставка по городу и ДНР, размеры 36-49. Быстрый заказ онлайн по выгодным ценам."
     h1_title = "Оригинальные брендовые кроссовки в Донецке"
 
     # Если мы на странице бренда
     if brand_filter:
         query = query.filter(Product.brand == brand_filter)
-        page_title = f"Купить кроссовки {brand_filter} в Донецке — оригинальные модели | Krossmag"
+        page_title = f"Кроссовки {brand_filter} купить в Донецке | KROSSMAG"
         h1_title = f"Кроссовки {brand_filter}"
         meta_desc = f"Заказывайте оригинальные кроссовки {brand_filter} с доставкой по Донецку и ДНР. 100% оригинал, лучшие цены."
 
@@ -1160,8 +1143,10 @@ def render_catalog(brand_filter=None):
     color_list = [c for c in colors.split(',') if c]
     if color_list: query = query.filter(Product.color.in_(color_list))
 
+    # Для обратной совместимости, если кто-то перейдет по старой ссылке ?brand=...
     brand_list = [b for b in brands_arg.split(',') if b]
-    if brand_list: query = query.filter(Product.brand.in_(brand_list))
+    if brand_list and not brand_filter:
+        query = query.filter(Product.brand.in_(brand_list))
 
     if min_p or max_p:
         krw_factor = USD_TO_KRW / (USD_TO_RUB * MARKUP)
@@ -1174,10 +1159,10 @@ def render_catalog(brand_filter=None):
         HOME_HTML,
         pagination=pagination, COLORS=COLORS, BRANDS=BRANDS, BRAND_LOGOS=BRAND_LOGOS,
         search=search, selected_colors=color_list, selected_colors_str=colors,
-        selected_brands=brand_list, selected_brands_str=brands_arg,
         min_p=min_p, max_p=max_p, messages=get_flashed_messages(with_categories=True),
         USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP,
-        page_title=page_title, meta_description=meta_desc, h1_title=h1_title
+        page_title=page_title, meta_description=meta_desc, h1_title=h1_title,
+        current_brand=brand_filter, BRAND_SLUGS_INV=BRAND_SLUGS_INV
     )
 
 
@@ -1199,11 +1184,37 @@ def product_detail(product_slug):
         product = Product.query.filter_by(slug=product_slug).first_or_404()
         
         # SEO: Мета теги карточки товара
-        page_title = f"{product.name} {product.brand} купить в Донецке"
+        page_title = f"{product.brand} {product.name} — купить в Донецке | Krossmag"
         meta_desc = f"Заказать {product.name} от бренда {product.brand}. Оригинал, лучшие цены, доставка по Донецку."
 
+        # Генерация JSON-LD Microdata Product
+        schema_dict = {
+            "@context": "https://schema.org/",
+            "@type": "Product",
+            "name": f"{product.brand} {product.name}",
+            "brand": {
+                "@type": "Brand",
+                "name": product.brand
+            },
+            "image": f"{request.host_url.rstrip('/')}/proxy_image?url={product.image}" if product.image else "",
+            "description": f"Удобные оригинальные кроссовки {product.brand} {product.name}. Купить с доставкой в Донецке и ДНР."
+        }
+        
         base_price = get_display_price(product.last_krw_price)
         base_rub = base_price['rub'] if base_price else 0
+
+        if product.available and base_rub:
+            schema_dict["offers"] = {
+                "@type": "Offer",
+                "url": request.url,
+                "priceCurrency": "RUB",
+                "price": str(base_rub),
+                "availability": "https://schema.org/InStock",
+                "itemCondition": "https://schema.org/NewCondition"
+            }
+
+        # Оборачиваем в тег script
+        schema_script = f'<script type="application/ld+json">\n{jsonify(schema_dict).get_data(as_text=True)}\n</script>'
 
         all_brand_products = Product.query.filter(Product.brand == product.brand, Product.id != product.id).all()
         related_candidates = []
@@ -1222,7 +1233,7 @@ def product_detail(product_slug):
 
         return render_template_string(PRODUCT_HTML, product=product, related=related, COLORS=COLORS,
                                       BRAND_LOGOS=BRAND_LOGOS, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
-                                      MARKUP=MARKUP, page_title=page_title, meta_description=meta_desc)
+                                      MARKUP=MARKUP, page_title=page_title, meta_description=meta_desc, schema_script=schema_script)
     except exc.OperationalError:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
@@ -1409,7 +1420,7 @@ def make_order(product_slug):
         sizes = list(range(36, 50))
         page_title = f"Оформление заказа: {product.name}"
         return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color,
-                                      product_id=product.id, sizes=sizes, page_title=page_title)
+                                     product_id=product.id, sizes=sizes, page_title=page_title)
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка: {str(e)}', 'danger')
@@ -1662,7 +1673,7 @@ def init_db():
             time.sleep(2)
 
 
-# SEO: Маршруты для страниц брендов (например /nike, /hoka)
+# SEO: Маршруты для страниц брендов (например /nike, /new-balance)
 @app.route('/<string:brand_slug>')
 def brand_page(brand_slug):
     if brand_slug not in BRAND_SLUGS:
@@ -1675,4 +1686,3 @@ def brand_page(brand_slug):
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
-
