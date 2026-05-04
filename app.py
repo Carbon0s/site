@@ -32,7 +32,15 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 31536000
 app.config['BABEL_DEFAULT_LOCALE'] = 'ru'
 babel = Babel(app)
 
-app.jinja_env.globals.update(getattr=getattr)
+# --- ФУНКЦИЯ ФИКСА ДВОЙНОГО БРЕНДА ---
+def clean_name_func(brand, name):
+    if not brand or not name: 
+        return name
+    if name.lower().startswith(brand.lower()):
+        return name[len(brand):].strip()
+    return name
+
+app.jinja_env.globals.update(getattr=getattr, clean_name=clean_name_func)
 
 # ================== ПОДКЛЮЧЕНИЕ К POSTGRESQL ==================
 DEFAULT_DB_URI = "postgresql://avnadmin:AVNS_JtcN8Ogu63nBIgc8odo@krossmag-krossmag.g.aivencloud.com:25520/defaultdb?sslmode=require"
@@ -185,7 +193,6 @@ def get_random_headers():
         "Connection": "keep-alive"
     }
 
-
 def update_exchange_rates():
     global USD_TO_KRW, USD_TO_RUB
     try:
@@ -196,7 +203,6 @@ def update_exchange_rates():
     except:
         pass
 
-
 def calculate_order_prices(krw):
     if not krw or krw < 10000: return 0, 0, 0, 0, 0
     real_rub = round((krw / USD_TO_KRW * USD_TO_RUB) / 10) * 10
@@ -205,7 +211,6 @@ def calculate_order_prices(krw):
     price_usd = round(price_rub / USD_TO_RUB)
     profit = price_rub - real_rub
     return price_rub, price_usd, real_rub, real_usd, profit
-
 
 def get_display_price(krw):
     if not krw or krw < 10000: return None
@@ -393,7 +398,6 @@ BASE_HTML = r"""
     <style>
         body { padding-top: 90px; background: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         
-        /* КАРТОЧКА ПК */
         .product-card { 
             background: #fff; border: none; border-radius: 12px; overflow: hidden; 
             box-shadow: 0 4px 6px rgba(0,0,0,0.05); transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); 
@@ -407,7 +411,6 @@ BASE_HTML = r"""
         .carousel-item img { height: 260px; object-fit: contain; padding: 10px; background: #fff; }
         .carousel-control-prev-icon, .carousel-control-next-icon { filter: invert(1); width: 25px; height: 25px; }
         
-        /* АНИМАЦИИ КНОПОК */
         .btn { transition: all 0.3s ease; }
         .hover-lift { transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; }
         .hover-lift:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; }
@@ -447,7 +450,6 @@ BASE_HTML = r"""
         .mobile-pagination-btn { padding: 10px 20px; font-size: 1rem; border-radius: 8px; transition: all 0.3s; }
         .mobile-pagination-btn:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
 
-        /* ИСПРАВЛЕННАЯ ШАПКА И СЕТКА ДЛЯ ТЕЛЕФОНОВ */
         @media (max-width: 991px) {
             body { padding-top: 105px; } 
             .navbar .container { flex-direction: row; flex-wrap: wrap; justify-content: space-between; padding: 5px 10px; }
@@ -455,7 +457,6 @@ BASE_HTML = r"""
             .main-logo { height: 40px; margin-right: 8px !important; margin-bottom: 0; } 
             .navbar .ms-auto { margin: 0 auto !important; justify-content: center; width: 100%; gap: 6px !important; }
             
-            /* Сетка 2х2 */
             .product-card { border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
             .product-card .card-body { padding: 10px 8px; }
             .product-card h5 { font-size: 0.85rem; line-height: 1.3; margin-bottom: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; white-space: normal; height: 2.6em; }
@@ -466,7 +467,6 @@ BASE_HTML = r"""
             .card-img-top { height: 140px; } 
             .carousel-item img { height: 140px; }
             
-            /* УМЕНЬШЕННЫЕ КНОПКИ */
             .mini-btn { width: 28px; height: 28px; font-size: 0.8rem; border-width: 0.5px; }
             .mini-btn.fav { top: 8px; right: 8px; }
             .mini-btn.cart { top: 40px; right: 8px; }
@@ -474,7 +474,6 @@ BASE_HTML = r"""
             
             .order-btn { padding: 0.375rem 0.5rem; font-size: 0.85rem; border-radius: 6px; }
 
-            /* Огромные кнопки пагинации на телефоне */
             .mobile-pagination-btn { padding: 15px 25px !important; font-size: 1.1rem !important; font-weight: bold; border-radius: 12px; width: auto; }
         }
     </style>
@@ -585,48 +584,48 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 <h1 class="text-center mb-4 fw-bold fs-2">{{ h1_title | default('Оригинальные брендовые кроссовки в Донецке') }}</h1>
 <div class="row mb-4">
     <div class="col-12">
-        <form method="GET" class="d-flex gap-2" action="{{ request.path }}">
-            <input type="text" name="search" class="form-control form-control-lg border-0 shadow-sm" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
+        <div class="d-flex gap-2">
+            <input type="text" id="searchInput" class="form-control form-control-lg border-0 shadow-sm" placeholder="Поиск кроссовок..." value="{{ search or '' }}">
             <button type="button" class="btn btn-outline-dark btn-lg px-4 hover-lift" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">Фильтры</button>
-        </form>
+            <button type="button" class="btn btn-dark btn-lg px-4 hover-lift d-none d-md-block" onclick="applyFilters()">Искать</button>
+        </div>
     </div>
 </div>
 
 <div class="collapse mb-4" id="filtersCollapse">
     <div class="card card-body border-0 shadow-sm rounded-4 bg-white">
-        <form method="GET" id="filterForm" action="{{ request.path }}">
-            <input type="hidden" name="search" value="{{ search or '' }}">
-            <div class="row">
-                <div class="col-md-12 mb-3">
-                    <label class="form-label fw-bold">Бренды</label>
-                    <div class="d-flex flex-wrap gap-2">
-                        {% for b in BRANDS %}
-                            <div onclick="toggleBrandURL('{{ BRAND_SLUGS_INV[b] }}', '{{ b == current_brand }}')" class="brand-pill {% if b == current_brand %}selected{% endif %}" data-brand="{{ b }}" style="cursor:pointer;">
-                                <img src="{{ BRAND_LOGOS[b] }}" class="brand-logo-mini" style="width: 20px; height: 20px;">{{ b }}
-                            </div>
-                        {% endfor %}
-                    </div>
-                </div>
-                <div class="col-md-8 mb-3">
-                    <label class="form-label fw-bold">Цвета</label>
-                    <div class="d-flex flex-wrap gap-1">
-                        {% for key, name in COLORS.items() %}
-                            <div onclick="toggleColor('{{ key }}')" class="color-circle {% if key in selected_colors %}selected{% endif %}" style="background-color: {{ key }};" title="{{ name }}" data-color="{{ key }}"></div>
-                        {% endfor %}
-                    </div>
-                    <input type="hidden" name="color" id="selectedColor" value="{{ selected_colors_str }}">
-                </div>
-                <div class="col-md-4 mb-3">
-                    <label class="form-label fw-bold">Цена (₽)</label>
-                    <div class="d-flex gap-2">
-                        <input type="number" name="min_p" class="form-control bg-light border-0" placeholder="От" value="{{ min_p or '' }}">
-                        <input type="number" name="max_p" class="form-control bg-light border-0" placeholder="До" value="{{ max_p or '' }}">
-                    </div>
+        <div class="row">
+            <div class="col-md-12 mb-3">
+                <label class="form-label fw-bold">Бренды</label>
+                <div class="d-flex flex-wrap gap-2">
+                    {% for b in BRANDS %}
+                        <div onclick="selectBrand(this, '{{ BRAND_SLUGS_INV[b] }}')" class="brand-pill {% if b == current_brand %}selected{% endif %}" style="cursor:pointer;">
+                            <img src="{{ BRAND_LOGOS[b] }}" class="brand-logo-mini" style="width: 20px; height: 20px;">{{ b }}
+                        </div>
+                    {% endfor %}
                 </div>
             </div>
-            <button type="submit" class="btn btn-dark mt-2 px-4 hover-lift">Показать</button>
-            <a href="{{ request.path }}" class="btn btn-link mt-2 text-muted">Сбросить</a>
-        </form>
+            <div class="col-md-8 mb-3">
+                <label class="form-label fw-bold">Цвета</label>
+                <div class="d-flex flex-wrap gap-1">
+                    {% for key, name in COLORS.items() %}
+                        <div onclick="toggleColor('{{ key }}')" class="color-circle {% if key in selected_colors %}selected{% endif %}" style="background-color: {{ key }};" title="{{ name }}" data-color="{{ key }}"></div>
+                    {% endfor %}
+                </div>
+                <input type="hidden" id="selectedColor" value="{{ selected_colors_str }}">
+            </div>
+            <div class="col-md-4 mb-3">
+                <label class="form-label fw-bold">Цена (₽)</label>
+                <div class="d-flex gap-2">
+                    <input type="number" id="min_p" class="form-control bg-light border-0" placeholder="От" value="{{ min_p or '' }}">
+                    <input type="number" id="max_p" class="form-control bg-light border-0" placeholder="До" value="{{ max_p or '' }}">
+                </div>
+            </div>
+        </div>
+        <div>
+            <button type="button" onclick="applyFilters()" class="btn btn-dark mt-2 px-4 hover-lift">Применить</button>
+            <button type="button" onclick="clearFilters()" class="btn btn-link mt-2 text-muted">Сбросить</button>
+        </div>
     </div>
 </div>
 
@@ -636,11 +635,11 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.slug }}'">
             <div id="carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                 <div class="carousel-inner">
-                    <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="eager" alt="{{ p.name }}">{% endif %}</div>
-                    {% if p.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image2 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
-                    {% if p.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image3 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
-                    {% if p.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image4 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
-                    {% if p.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image5 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}"></div>{% endif %}
+                    <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="eager" alt="{{ clean_name(p.brand, p.name) }}">{% endif %}</div>
+                    {% if p.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image2 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ clean_name(p.brand, p.name) }}"></div>{% endif %}
+                    {% if p.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image3 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ clean_name(p.brand, p.name) }}"></div>{% endif %}
+                    {% if p.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image4 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ clean_name(p.brand, p.name) }}"></div>{% endif %}
+                    {% if p.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ p.image5 }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ clean_name(p.brand, p.name) }}"></div>{% endif %}
                 </div>
                 {% if p.image2 %}
                 <button class="carousel-control-prev" type="button" data-bs-target="#carousel{{ p.id }}" data-bs-slide="prev" onclick="event.stopPropagation()"><span class="carousel-control-prev-icon"></span></button>
@@ -650,7 +649,7 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
             </div>
             <div class="card-body d-flex flex-column bg-white">
-                <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.brand }} {{ clean_name(p.brand, p.name) }}">{{ p.brand }} {{ clean_name(p.brand, p.name) }}</h5>
                 <div class="d-flex align-items-center mb-2">
                     <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                     <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -702,13 +701,16 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 
 <script>
-    function toggleBrandURL(slug, isSelected) {
-        let params = new URLSearchParams(window.location.search);
-        params.delete('page'); // сбрасываем страницу при смене бренда
-        if (isSelected === 'True') {
-            window.location.href = '/' + (params.toString() ? '?' + params.toString() : '');
+    // JS логика для фильтрации через AJAX сессии (чтобы не пачкать ссылку)
+    let selectedBrandSlug = "{{ BRAND_SLUGS_INV.get(current_brand, '') if current_brand else '' }}";
+
+    function selectBrand(el, slug) {
+        document.querySelectorAll('.brand-pill').forEach(b => b.classList.remove('selected'));
+        if (selectedBrandSlug === slug) {
+            selectedBrandSlug = ""; // Отмена выбора
         } else {
-            window.location.href = '/' + slug + (params.toString() ? '?' + params.toString() : '');
+            el.classList.add('selected');
+            selectedBrandSlug = slug;
         }
     }
 
@@ -720,6 +722,34 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         if (idx > -1) { colors.splice(idx, 1); el.classList.remove('selected'); } 
         else { colors.push(color); el.classList.add('selected'); }
         input.value = colors.join(',');
+    }
+
+    function applyFilters() {
+        let search = document.getElementById('searchInput').value;
+        let color = document.getElementById('selectedColor').value;
+        let min_p = document.getElementById('min_p').value;
+        let max_p = document.getElementById('max_p').value;
+
+        // Отправляем данные на сервер для сохранения в сессию
+        fetch('/api/set_filters', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({search: search, color: color, min_p: min_p, max_p: max_p})
+        }).then(r => r.json()).then(data => {
+            // Перенаправляем только на чистую ссылку бренда или на главную
+            if (selectedBrandSlug) {
+                window.location.href = '/' + selectedBrandSlug;
+            } else {
+                window.location.href = '/';
+            }
+        });
+    }
+
+    function clearFilters() {
+        fetch('/api/clear_filters', { method: 'POST' })
+        .then(r => r.json()).then(() => {
+            window.location.href = '/';
+        });
     }
 </script>
 """)
@@ -733,11 +763,11 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         <div class="col-md-6 bg-white d-flex align-items-center justify-content-center p-4 position-relative">
             <div id="bigCarousel" class="carousel slide w-100" data-bs-interval="false">
                 <div class="carousel-inner">
-                    <div class="carousel-item active">{% if product.image %}<img src="/proxy_image?url={{ product.image }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="eager" alt="{{ product.name }}">{% endif %}</div>
-                    {% if product.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image2 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
-                    {% if product.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image3 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
-                    {% if product.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image4 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
-                    {% if product.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image5 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ product.name }}"></div>{% endif %}
+                    <div class="carousel-item active">{% if product.image %}<img src="/proxy_image?url={{ product.image }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="eager" alt="{{ clean_name(product.brand, product.name) }}">{% endif %}</div>
+                    {% if product.image2 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image2 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ clean_name(product.brand, product.name) }}"></div>{% endif %}
+                    {% if product.image3 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image3 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ clean_name(product.brand, product.name) }}"></div>{% endif %}
+                    {% if product.image4 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image4 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ clean_name(product.brand, product.name) }}"></div>{% endif %}
+                    {% if product.image5 %}<div class="carousel-item"><img src="/proxy_image?url={{ product.image5 }}" class="d-block w-100 rounded {% if not product.available %}opacity-50{% endif %}" style="height:500px; object-fit:contain;" loading="lazy" alt="{{ clean_name(product.brand, product.name) }}"></div>{% endif %}
                 </div>
                 {% if product.image2 %}
                 <button class="carousel-control-prev" type="button" data-bs-target="#bigCarousel" data-bs-slide="prev"><span class="carousel-control-prev-icon" style="filter:invert(1)"></span></button>
@@ -748,7 +778,7 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         </div>
 
         <div class="col-md-6 p-5 bg-white">
-            <h1 class="fw-bold mb-2 fs-2">{{ product.name }}</h1> 
+            <h1 class="fw-bold mb-2 fs-2">{{ product.brand }} {{ clean_name(product.brand, product.name) }}</h1> 
             <div class="d-flex align-items-center mb-4 fs-5 text-muted">
                 <span class="me-3 d-flex align-items-center"><img src="{{ BRAND_LOGOS.get(product.brand) }}" class="brand-logo-mini" style="width:24px; height:24px;"> <strong>{{ product.brand }}</strong></span>
                 <span class="d-flex align-items-center"><strong>Цвет:</strong> <div class="card-color-circle ms-2 shadow-sm" style="width: 20px; height: 20px; background-color: {{ product.color }};" title="{{ COLORS.get(product.color, '') }}"></div></span>
@@ -778,11 +808,11 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <div class="dropdown flex-fill d-flex" style="min-width: 30%;">
                     <button class="btn btn-light hover-lift btn-share btn-lg w-100 fw-bold bg-white dropdown-toggle border shadow-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false">🔗 Поделиться</button>
                     <ul class="dropdown-menu w-100 shadow border-0 rounded-3">
-                        <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ product.name|replace("'", "\\'") }}')">📲 Поделиться</a></li>
+                        <li class="d-block d-md-none"><a class="dropdown-item py-2 fw-bold" href="#" onclick="shareNative(event, '{{ clean_name(product.brand, product.name)|replace("'", "\\'") }}')">📲 Поделиться</a></li>
                         <li class="d-block d-md-none"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.slug }}')">🔗 Скопировать ссылку</a></li>
                         
-                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.slug }}&text=Смотри, что я нашел в KROSSMAG: {{ product.name }}">✈️ Telegram</a></li>
-                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://api.whatsapp.com/send?text=Смотри, что я нашел в KROSSMAG: {{ product.name }} - {{ request.host_url }}product/{{ product.slug }}">🟢 WhatsApp</a></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://t.me/share/url?url={{ request.host_url }}product/{{ product.slug }}&text=Смотри, что я нашел в KROSSMAG: {{ product.brand }} {{ clean_name(product.brand, product.name) }}">✈️ Telegram</a></li>
+                        <li class="d-none d-md-block"><a class="dropdown-item py-2" target="_blank" href="https://api.whatsapp.com/send?text=Смотри, что я нашел в KROSSMAG: {{ product.brand }} {{ clean_name(product.brand, product.name) }} - {{ request.host_url }}product/{{ product.slug }}">🟢 WhatsApp</a></li>
                         <li class="d-none d-md-block"><hr class="dropdown-divider"></li>
                         <li class="d-none d-md-block"><a class="dropdown-item py-2" href="#" onclick="copyLink(event, '{{ request.host_url }}product/{{ product.slug }}')">🔗 Скопировать ссылку</a></li>
                     </ul>
@@ -806,13 +836,13 @@ PRODUCT_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
             <div class="product-card {% if not p.available %}unavailable{% endif %}" onclick="window.location.href='/product/{{ p.slug }}'">
                 <div id="rel_carousel{{ p.id }}" class="carousel slide card-img-wrapper" data-bs-interval="false">
                     <div class="carousel-inner">
-                        <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ p.name }}">{% endif %}</div>
+                        <div class="carousel-item active">{% if p.image %}<img src="/proxy_image?url={{ p.image }}" class="d-block w-100 card-img-top" loading="lazy" alt="{{ clean_name(p.brand, p.name) }}">{% endif %}</div>
                     </div>
                     <a href="/api/fav/add/{{ p.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="В избранное">❤️</a>
                     {% if p.available %}<a href="/api/cart/add/{{ p.id }}" class="mini-btn cart text-decoration-none" onclick="event.stopPropagation()" title="В корзину">🛒</a>{% endif %}
                 </div>
                 <div class="card-body d-flex flex-column bg-white">
-                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.name }}">{{ p.name }}</h5>
+                    <h5 class="card-title text-truncate-mobile-wrap text-truncate" title="{{ p.brand }} {{ clean_name(p.brand, p.name) }}">{{ p.brand }} {{ clean_name(p.brand, p.name) }}</h5>
                     <div class="d-flex align-items-center mb-2">
                         <img src="{{ BRAND_LOGOS.get(p.brand) }}" class="brand-logo-mini" style="width:16px; height:16px;">
                         <span class="text-muted small me-2">{{ p.brand }}</span>
@@ -855,7 +885,7 @@ FAVORITES_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <a href="/api/fav/remove/{{ f.id }}" class="mini-btn fav text-decoration-none" onclick="event.stopPropagation()" title="Убрать">❌</a>
             </div>
             <div class="card-body bg-white d-flex flex-column">
-                <h5 class="text-truncate-mobile-wrap text-truncate">{{ f.product.name }}</h5>
+                <h5 class="text-truncate-mobile-wrap text-truncate">{{ f.product.brand }} {{ clean_name(f.product.brand, f.product.name) }}</h5>
                 <p id="price-{{ f.product.id }}" class="price-main mb-2">
                     {% if f.product.last_krw_price and f.product.last_krw_price > 10000 %}
                         {{ ((f.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽
@@ -886,7 +916,7 @@ CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                 <div class="col-8 col-md-9">
                     <div class="card-body d-flex flex-column h-100">
                         <div class="d-flex justify-content-between align-items-start">
-                            <h5 class="card-title fw-bold text-truncate pe-3">{{ c.product.name }}</h5>
+                            <h5 class="card-title fw-bold text-truncate pe-3">{{ c.product.brand }} {{ clean_name(c.product.brand, c.product.name) }}</h5>
                             <a href="/api/cart/remove/{{ c.id }}" class="text-danger text-decoration-none fs-5 hover-lift" onclick="event.stopPropagation()">✖</a>
                         </div>
                         <p class="text-muted small mb-2">{{ c.product.brand }}</p>
@@ -938,11 +968,11 @@ ORDER_CART_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                     <div class="d-flex align-items-center mb-3 p-3 bg-white rounded shadow-sm border border-light">
                         <img src="/proxy_image?url={{ item.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">
                         <div class="w-100">
-                            <h6 class="fw-bold mb-1" style="font-size: 1rem; color: #333;">{{ item.product.name }}</h6>
+                            <h6 class="fw-bold mb-1" style="font-size: 1rem; color: #333;">{{ item.product.brand }} {{ clean_name(item.product.brand, item.product.name) }}</h6>
                             <span class="text-muted small d-flex align-items-center mb-2">Цвет: <div class="card-color-circle mx-1" style="background-color: {{ item.product.color }}; width:12px; height:12px;"></div> | Цена: {{ ((item.product.last_krw_price / USD_TO_KRW * USD_TO_RUB * MARKUP) / 10)|round(0)|int * 10 }} ₽</span>
 
                             <div class="mt-2 bg-light p-2 rounded">
-                                <label class="form-label small fw-bold text-primary mb-1">▶ Выберите размер для: <span class="text-dark">{{ item.product.name }}</span></label>
+                                <label class="form-label small fw-bold text-primary mb-1">▶ Выберите размер для: <span class="text-dark">{{ clean_name(item.product.brand, item.product.name) }}</span></label>
                                 <select name="size_{{ item.product.id }}" class="form-select form-select-sm border-primary shadow-sm" required>
                                     <option value="">-- Обязательно выберите размер --</option>
                                     {% for s in range(36, 50) %}
@@ -1044,7 +1074,7 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                         <div class="d-flex align-items-center mb-3">
                             {% if o.product and o.product.image %}<img src="/proxy_image?url={{ o.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">{% endif %}
                             <div class="w-100 overflow-hidden">
-                                <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{{ o.product_name }}</h6>
+                                <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{% if o.product %}{{ o.product.brand }} {{ clean_name(o.product.brand, o.product_name) }}{% else %}{{ o.product_name }}{% endif %}</h6>
                                 <p class="text-muted small mb-0">Размер: {{ o.size }} | {{ o.date.strftime('%d.%m.%Y') }} {% if o.order_group_id %}(Заказ №{{ o.order_group_id }}){% endif %}</p>
                                 {% if o.product %}<a href="/product/{{ o.product.slug }}" class="small text-decoration-none">Перейти к товару</a>{% endif %}
                             </div>
@@ -1070,7 +1100,7 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
                         <div class="d-flex align-items-center mb-3">
                             {% if o.product and o.product.image %}<img src="/proxy_image?url={{ o.product.image }}" style="width: 70px; height: 70px; object-fit: contain;" class="rounded bg-light p-1 me-3">{% endif %}
                             <div class="w-100 overflow-hidden">
-                                <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{{ o.product_name }}</h6>
+                                <h6 class="fw-bold mb-1 text-truncate-mobile-wrap" style="color: #222;">{% if o.product %}{{ o.product.brand }} {{ clean_name(o.product.brand, o.product_name) }}{% else %}{{ o.product_name }}{% endif %}</h6>
                                 <p class="text-muted small mb-0">Размер: {{ o.size }} | {{ o.date.strftime('%d.%m.%Y') }} {% if o.order_group_id %}(Заказ №{{ o.order_group_id }}){% endif %}</p>
                             </div>
                         </div>
@@ -1115,13 +1145,39 @@ MY_ORDERS_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 
 # ================== РОУТЫ ПРИЛОЖЕНИЯ ==================
 
+# --- API ДЛЯ СОХРАНЕНИЯ И СБРОСА ФИЛЬТРОВ В СЕССИИ (Без URL) ---
+@app.route('/api/set_filters', methods=['POST'])
+def set_filters():
+    data = request.json
+    session['filter_search'] = data.get('search', '')
+    session['filter_color'] = data.get('color', '')
+    
+    min_p = data.get('min_p')
+    session['filter_min_p'] = int(min_p) if min_p and str(min_p).isdigit() else None
+    
+    max_p = data.get('max_p')
+    session['filter_max_p'] = int(max_p) if max_p and str(max_p).isdigit() else None
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/clear_filters', methods=['POST'])
+def clear_filters():
+    session.pop('filter_search', None)
+    session.pop('filter_color', None)
+    session.pop('filter_min_p', None)
+    session.pop('filter_max_p', None)
+    return jsonify({"status": "ok"})
+
+
 def render_catalog(brand_filter=None):
     session['last_query'] = request.query_string.decode('utf-8')
-    search = request.args.get('search', '').strip()
-    colors = request.args.get('color', '')
-    brands_arg = request.args.get('brand', '')
-    min_p = request.args.get('min_p', type=int)
-    max_p = request.args.get('max_p', type=int)
+    
+    # Читаем фильтры из сессии, а не из ссылки
+    search = session.get('filter_search', '').strip()
+    colors = session.get('filter_color', '')
+    min_p = session.get('filter_min_p')
+    max_p = session.get('filter_max_p')
+    
     page = request.args.get('page', 1, type=int)
 
     query = Product.query
@@ -1142,11 +1198,6 @@ def render_catalog(brand_filter=None):
 
     color_list = [c for c in colors.split(',') if c]
     if color_list: query = query.filter(Product.color.in_(color_list))
-
-    # Для обратной совместимости, если кто-то перейдет по старой ссылке ?brand=...
-    brand_list = [b for b in brands_arg.split(',') if b]
-    if brand_list and not brand_filter:
-        query = query.filter(Product.brand.in_(brand_list))
 
     if min_p or max_p:
         krw_factor = USD_TO_KRW / (USD_TO_RUB * MARKUP)
@@ -1183,21 +1234,22 @@ def product_detail(product_slug):
     try:
         product = Product.query.filter_by(slug=product_slug).first_or_404()
         
-        # SEO: Мета теги карточки товара
-        page_title = f"{product.brand} {product.name} — купить в Донецке | Krossmag"
-        meta_desc = f"Заказать {product.name} от бренда {product.brand}. Оригинал, лучшие цены, доставка по Донецку."
+        # SEO: Мета теги карточки товара + ФИКС ДВОЙНОГО БРЕНДА
+        clean_prod_name = clean_name_func(product.brand, product.name)
+        page_title = f"{product.brand} {clean_prod_name} — купить в Донецке | Krossmag"
+        meta_desc = f"Заказать {clean_prod_name} от бренда {product.brand}. Оригинал, лучшие цены, доставка по Донецку."
 
         # Генерация JSON-LD Microdata Product
         schema_dict = {
             "@context": "https://schema.org/",
             "@type": "Product",
-            "name": f"{product.brand} {product.name}",
+            "name": f"{product.brand} {clean_prod_name}",
             "brand": {
                 "@type": "Brand",
                 "name": product.brand
             },
             "image": f"{request.host_url.rstrip('/')}/proxy_image?url={product.image}" if product.image else "",
-            "description": f"Удобные оригинальные кроссовки {product.brand} {product.name}. Купить с доставкой в Донецке и ДНР."
+            "description": f"Удобные оригинальные кроссовки {product.brand} {clean_prod_name}. Купить с доставкой в Донецке и ДНР."
         }
         
         base_price = get_display_price(product.last_krw_price)
@@ -1388,6 +1440,10 @@ def make_order(product_slug):
             max_group = db.session.query(db.func.max(Order.order_group_id)).scalar() or 0
             new_group = max_group + 1
 
+            # ФИКС двойного бренда при сохранении в БД
+            clean_prod_name = clean_name_func(product.brand, product.name)
+            final_name = f"{product.brand} {clean_prod_name}"
+
             order = Order(
                 session_id=session['uid'],
                 order_group_id=new_group,
@@ -1397,7 +1453,7 @@ def make_order(product_slug):
                 email=request.form.get('email'),
                 address=full_address,
                 product_id=product.id,
-                product_name=product.name,
+                product_name=final_name,
                 size=request.form['size'],
                 comment=request.form.get('comment'),
                 price_rub_at_order=price_rub,
@@ -1418,8 +1474,9 @@ def make_order(product_slug):
             return redirect('/')
 
         sizes = list(range(36, 50))
-        page_title = f"Оформление заказа: {product.name}"
-        return render_template_string(ORDER_HTML, product_name=product.name, product_color=product.color,
+        clean_prod_name = clean_name_func(product.brand, product.name)
+        page_title = f"Оформление заказа: {product.brand} {clean_prod_name}"
+        return render_template_string(ORDER_HTML, product_name=f"{product.brand} {clean_prod_name}", product_color=product.color,
                                      product_id=product.id, sizes=sizes, page_title=page_title)
     except Exception as e:
         db.session.rollback()
@@ -1450,6 +1507,10 @@ def order_cart():
                 price_rub, price_usd, real_rub, real_usd, profit = calculate_order_prices(krw)
 
                 selected_size = request.form.get(f'size_{item.product.id}')
+                
+                # ФИКС двойного бренда для корзины
+                clean_prod_name = clean_name_func(item.product.brand, item.product.name)
+                final_name = f"{item.product.brand} {clean_prod_name}"
 
                 order = Order(
                     session_id=session['uid'],
@@ -1460,7 +1521,7 @@ def order_cart():
                     email=request.form.get('email'),
                     address=full_address,
                     product_id=item.product.id,
-                    product_name=item.product.name,
+                    product_name=final_name,
                     size=selected_size,
                     comment=request.form.get('comment'),
                     price_rub_at_order=price_rub,
@@ -1573,7 +1634,6 @@ class ProductAdmin(ModelView):
 
     column_list = ['id', 'name', 'brand', 'color', 'real_rub', 'price_rub', 'profit_rub', 'available']
     
-    # УБРАЛИ ПОЛЕ sizes ИЗ ФОРМЫ (так как размеры 36-49 выдаются всем автоматически)
     form_columns = ['name', 'slug', 'description', 'price_url', 'brand', 'color', 'available', 'image', 'image2',
                     'image3', 'image4', 'image5']
     form_choices = {'brand': [(b, b) for b in BRANDS], 'color': [(k, v) for k, v in COLORS.items()]}
@@ -1591,7 +1651,6 @@ class ProductAdmin(ModelView):
 
     def is_accessible(self): return current_user.is_authenticated and getattr(current_user, 'is_admin', False)
 
-    # АВТО-ГЕНЕРАЦИЯ SLUG В АДМИНКЕ
     def on_model_change(self, form, model, is_created):
         if not model.slug or is_created:
             base_slug = slugify(f"{model.brand} {model.name}")
@@ -1647,7 +1706,6 @@ def init_db():
                     if 'order_group_id' not in cols: conn.execute(text("ALTER TABLE orders ADD COLUMN order_group_id INTEGER DEFAULT 0"))
                 if 'products' in inspector.get_table_names():
                     cols = [c['name'] for c in inspector.get_columns('products')]
-                    # ДОБАВЛЯЕМ КОЛОНКУ SLUG ДЛЯ SEO (если ее еще нет)
                     if 'slug' not in cols: conn.execute(text("ALTER TABLE products ADD COLUMN slug VARCHAR(255)"))
 
             if not User.query.filter_by(username='admin').first():
@@ -1656,7 +1714,6 @@ def init_db():
                 db.session.add(admin_user)
                 db.session.commit()
             
-            # АВТО-ГЕНЕРАЦИЯ SLUG ДЛЯ СТАРЫХ ТОВАРОВ (Единожды при запуске)
             products_without_slug = Product.query.filter((Product.slug == None) | (Product.slug == '')).all()
             for p in products_without_slug:
                 base_slug = slugify(f"{p.brand} {p.name}")
