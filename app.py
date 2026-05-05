@@ -82,12 +82,17 @@ def yandex_verification():
 # SEO: ROBOTS.TXT
 @app.route('/robots.txt')
 def robots_txt():
+    # ФИКС: Явный запрет на индексацию системных страниц
     rules = (
         "User-agent: *\n"
         "Disallow: /admin/\n"
         "Disallow: /api/\n"
         "Disallow: /order/\n"
         "Disallow: /cart\n"
+        "Disallow: /login\n"
+        "Disallow: /register\n"
+        "Disallow: /favorites\n"
+        "Disallow: /my_orders\n"
         "Allow: /\n\n"
         f"Sitemap: {request.host_url.rstrip('/')}/sitemap.xml"
     )
@@ -391,6 +396,8 @@ BASE_HTML = r"""
     <title>{{ page_title | default('KROSSMAG - Оригинальные кроссовки в Донецке') }}</title>
     <meta name="description" content="{{ meta_description | default('Купить оригинальные кроссовки Nike, Adidas, New Balance, Hoka и другие бренды в Донецке. Гарантия оригинальности, доставка по городу и ДНР, размеры 36-49. Быстрый заказ онлайн по выгодным ценам.') }}">
     
+    <meta name="robots" content="{{ meta_robots | default('index, follow') }}">
+    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="icon" type="image/png" href="/image/krossmag.png">
     <link rel="apple-touch-icon" href="/image/krossmag.png">
@@ -486,22 +493,22 @@ BASE_HTML = r"""
             </a>
             
             <div class="ms-auto d-flex align-items-center gap-3">
-                <a href="/favorites" class="text-white text-decoration-none icon-btn" title="Избранное">
+                <a href="/favorites" rel="nofollow" class="text-white text-decoration-none icon-btn" title="Избранное">
                     <img src="https://images.icon-icons.com/903/PNG/512/bookmark_icon-icons.com_69556.png">
                 </a>
-                <a href="/cart" class="text-white text-decoration-none icon-btn" title="Корзина">
+                <a href="/cart" rel="nofollow" class="text-white text-decoration-none icon-btn" title="Корзина">
                     <img src="https://cdn-icons-png.flaticon.com/512/7244/7244725.png">
                 </a>
 
                 {% if current_user.is_authenticated and getattr(current_user, 'is_admin', False) == False %}
-                    <a href="/my_orders" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">📦 Заказы</a>
-                    <a href="/logout" class="btn btn-sm btn-danger fw-bold hover-lift">Выход</a>
+                    <a href="/my_orders" rel="nofollow" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">📦 Заказы</a>
+                    <a href="/logout" rel="nofollow" class="btn btn-sm btn-danger fw-bold hover-lift">Выход</a>
                 {% elif current_user.is_authenticated and getattr(current_user, 'is_admin', False) == True %}
-                    <a href="/admin" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">Админка</a>
-                    <a href="/logout" class="btn btn-sm btn-danger fw-bold hover-lift">Выход</a>
+                    <a href="/admin" rel="nofollow" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">Админка</a>
+                    <a href="/logout" rel="nofollow" class="btn btn-sm btn-danger fw-bold hover-lift">Выход</a>
                 {% else %}
-                    <a href="/login" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">Вход</a>
-                    <a href="/register" class="btn btn-sm btn-light fw-bold text-dark hover-lift">Регистрация</a>
+                    <a href="/login" rel="nofollow" class="btn btn-sm btn-outline-light fw-bold ms-1 hover-lift">Вход</a>
+                    <a href="/register" rel="nofollow" class="btn btn-sm btn-light fw-bold text-dark hover-lift">Регистрация</a>
                 {% endif %}
                 
                 <a href="https://t.me/KROSSMAG_ry" target="_blank" class="d-flex align-items-center ms-1" title="Наш Telegram-канал">
@@ -701,13 +708,12 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
 </div>
 
 <script>
-    // JS логика для фильтрации через AJAX сессии (чтобы не пачкать ссылку)
     let selectedBrandSlug = "{{ BRAND_SLUGS_INV.get(current_brand, '') if current_brand else '' }}";
 
     function selectBrand(el, slug) {
         document.querySelectorAll('.brand-pill').forEach(b => b.classList.remove('selected'));
         if (selectedBrandSlug === slug) {
-            selectedBrandSlug = ""; // Отмена выбора
+            selectedBrandSlug = ""; 
         } else {
             el.classList.add('selected');
             selectedBrandSlug = slug;
@@ -730,13 +736,11 @@ HOME_HTML = BASE_HTML.replace("{{ content | safe }}", r"""
         let min_p = document.getElementById('min_p').value;
         let max_p = document.getElementById('max_p').value;
 
-        // Отправляем данные на сервер для сохранения в сессию
         fetch('/api/set_filters', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({search: search, color: color, min_p: min_p, max_p: max_p})
         }).then(r => r.json()).then(data => {
-            // Перенаправляем только на чистую ссылку бренда или на главную
             if (selectedBrandSlug) {
                 window.location.href = '/' + selectedBrandSlug;
             } else {
@@ -1320,8 +1324,9 @@ def favorites():
     try:
         favs = FavoriteItem.query.filter_by(session_id=session['uid']).all()
         page_title = "Моё избранное | Krossmag"
+        # ФИКС: Запрет индексации
         return render_template_string(FAVORITES_HTML, favorites=favs, USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB,
-                                      MARKUP=MARKUP, page_title=page_title)
+                                      MARKUP=MARKUP, page_title=page_title, meta_robots="noindex, nofollow")
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
@@ -1334,8 +1339,9 @@ def cart():
         total_rub = sum([get_display_price(i.product.last_krw_price)['rub'] for i in items if
                          i.product.last_krw_price > 10000]) if items else 0
         page_title = "Корзина | Krossmag"
+        # ФИКС: Запрет индексации
         return render_template_string(CART_HTML, cart_items=items, total_rub=f"{total_rub:,}".replace(',', ' '),
-                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP, page_title=page_title)
+                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP, page_title=page_title, meta_robots="noindex, nofollow")
     except Exception:
         db.session.rollback()
         return "Ошибка. Обновите страницу.", 503
@@ -1440,7 +1446,6 @@ def make_order(product_slug):
             max_group = db.session.query(db.func.max(Order.order_group_id)).scalar() or 0
             new_group = max_group + 1
 
-            # ФИКС двойного бренда при сохранении в БД
             clean_prod_name = clean_name_func(product.brand, product.name)
             final_name = f"{product.brand} {clean_prod_name}"
 
@@ -1476,8 +1481,9 @@ def make_order(product_slug):
         sizes = list(range(36, 50))
         clean_prod_name = clean_name_func(product.brand, product.name)
         page_title = f"Оформление заказа: {product.brand} {clean_prod_name}"
+        # ФИКС: Запрет индексации
         return render_template_string(ORDER_HTML, product_name=f"{product.brand} {clean_prod_name}", product_color=product.color,
-                                     product_id=product.id, sizes=sizes, page_title=page_title)
+                                     product_id=product.id, sizes=sizes, page_title=page_title, meta_robots="noindex, nofollow")
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка: {str(e)}', 'danger')
@@ -1508,7 +1514,6 @@ def order_cart():
 
                 selected_size = request.form.get(f'size_{item.product.id}')
                 
-                # ФИКС двойного бренда для корзины
                 clean_prod_name = clean_name_func(item.product.brand, item.product.name)
                 final_name = f"{item.product.brand} {clean_prod_name}"
 
@@ -1539,8 +1544,9 @@ def order_cart():
             return redirect(url_for('thanks'))
 
         page_title = "Оформление корзины"
+        # ФИКС: Запрет индексации
         return render_template_string(ORDER_CART_HTML, items=valid_items, total_rub=f"{total_rub:,}".replace(',', ' '),
-                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP, page_title=page_title)
+                                      USD_TO_KRW=USD_TO_KRW, USD_TO_RUB=USD_TO_RUB, MARKUP=MARKUP, page_title=page_title, meta_robots="noindex, nofollow")
     except Exception as e:
         db.session.rollback()
         flash(f'Ошибка оформления: {str(e)}', 'danger')
@@ -1548,7 +1554,9 @@ def order_cart():
 
 
 @app.route('/thanks')
-def thanks(): return render_template_string(THANKS_HTML, page_title="Спасибо за заказ!")
+def thanks(): 
+    # ФИКС: Запрет индексации
+    return render_template_string(THANKS_HTML, page_title="Спасибо за заказ!", meta_robots="noindex, nofollow")
 
 
 # ================== АВТОРИЗАЦИЯ И РЕГИСТРАЦИЯ ==================
@@ -1569,7 +1577,8 @@ def register():
                 login_user(new_user)
                 flash('Вы успешно зарегистрировались!', 'success')
                 return redirect('/')
-        return render_template_string(REGISTER_HTML, messages=get_flashed_messages(with_categories=True), page_title="Регистрация")
+        # ФИКС: Запрет индексации
+        return render_template_string(REGISTER_HTML, messages=get_flashed_messages(with_categories=True), page_title="Регистрация", meta_robots="noindex, nofollow")
     except Exception:
         db.session.rollback()
         return "Ошибка регистрации. Попробуйте еще раз.", 500
@@ -1587,7 +1596,8 @@ def login():
                 if getattr(user, 'is_admin', False): return redirect('/admin')
                 return redirect('/')
             flash('Неверные данные', 'danger')
-        return render_template_string(LOGIN_HTML, messages=get_flashed_messages(with_categories=True), page_title="Вход")
+        # ФИКС: Запрет индексации
+        return render_template_string(LOGIN_HTML, messages=get_flashed_messages(with_categories=True), page_title="Вход", meta_robots="noindex, nofollow")
     except Exception:
         db.session.rollback()
         return "Ошибка БД. Обновите страницу.", 503
@@ -1609,7 +1619,8 @@ def my_orders():
         active_orders = [o for o in orders if o.status != 'Заказ Доставлен']
         delivered_orders = [o for o in orders if o.status == 'Заказ Доставлен']
         page_title = "Мои заказы"
-        return render_template_string(MY_ORDERS_HTML, active_orders=active_orders, delivered_orders=delivered_orders, page_title=page_title)
+        # ФИКС: Запрет индексации
+        return render_template_string(MY_ORDERS_HTML, active_orders=active_orders, delivered_orders=delivered_orders, page_title=page_title, meta_robots="noindex, nofollow")
     except Exception:
         db.session.rollback()
         return "Ошибка загрузки заказов", 500
