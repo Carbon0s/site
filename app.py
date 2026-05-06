@@ -489,7 +489,7 @@ BASE_HTML = r"""
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top shadow-sm">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center hover-lift" href="/">
-                <img src="https://i.postimg.cc/wy0jWDdm/logo.png" alt="Logo" class="main-logo">KROSSMAG
+                <img src="https://i.postimg.cc/wy0jWDdm/logo.png" alt="Логотип магазина KROSSMAG" class="main-logo">KROSSMAG
             </a>
             
             <div class="ms-auto d-flex align-items-center gap-3">
